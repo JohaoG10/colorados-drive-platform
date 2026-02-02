@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+:root {
+  --color-primary: #dc2626;
+  --color-primary-dark: #b91c1c;
+  --color-primary-light: #fef2f2;
+  --color-black: #0f0f0f;
+  --color-gray-dark: #262626;
+  --color-gray: #525252;
+  --color-gray-light: #a3a3a3;
+  --color-white: #ffffff;
+  --color-off-white: #fafafa;
+}
+
+@theme inline {
+  --color-background: var(--color-off-white);
+  --color-foreground: var(--color-black);
+  --font-sans: var(--font-outfit);
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* Road stripes accent */
+.road-stripes {
+  background: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 40px,
+    rgba(220, 38, 38, 0.08) 40px,
+    rgba(220, 38, 38, 0.08) 60px
+  );
+}
