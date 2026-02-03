@@ -24,7 +24,7 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
 }
 
-/* Road stripes accent */
+/* Road stripes accent - rayas de carretera */
 .road-stripes {
   background: repeating-linear-gradient(
     90deg,
@@ -33,4 +33,74 @@ body {
     rgba(220, 38, 38, 0.08) 40px,
     rgba(220, 38, 38, 0.08) 60px
   );
+}
+
+/* Animación suave para cards */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.4s ease-out forwards;
+}
+
+/* Logo: brillo sutil al hover */
+@keyframes logo-shine {
+  0% { opacity: 0; transform: translateX(-100%); }
+  60% { opacity: 0.6; transform: translateX(100%); }
+  100% { opacity: 0; transform: translateX(100%); }
+}
+
+/* Login: fondo en movimiento */
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -20px) scale(1.05); }
+  66% { transform: translate(-20px, 20px) scale(0.95); }
+}
+
+.animate-float {
+  animation: float 18s ease-in-out infinite;
+}
+
+@keyframes login-fade-in-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+.login-stagger > * {
+  animation: login-fade-in-up 0.5s ease-out backwards;
+}
+.login-stagger > *:nth-child(1) { animation-delay: 0.05s; }
+.login-stagger > *:nth-child(2) { animation-delay: 0.12s; }
+.login-stagger > *:nth-child(3) { animation-delay: 0.19s; }
+.login-stagger > *:nth-child(4) { animation-delay: 0.26s; }
+.login-stagger > *:nth-child(5) { animation-delay: 0.33s; }
+.login-stagger > *:nth-child(6) { animation-delay: 0.4s; }
+.login-stagger > *:nth-child(7) { animation-delay: 0.47s; }
+.login-stagger > *:nth-child(8) { animation-delay: 0.54s; }
+.login-stagger > *:nth-child(9) { animation-delay: 0.61s; }
+.login-stagger > *:nth-child(10) { animation-delay: 0.68s; }
+
+.animate-shake {
+  animation: shake 0.4s ease-in-out;
 }

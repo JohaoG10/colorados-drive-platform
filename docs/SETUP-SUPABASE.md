@@ -61,6 +61,16 @@ CREATE TABLE IF NOT EXISTS cohorts (
   UNIQUE(course_id, code)
 );
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS cohort_id UUID REFERENCES cohorts(id) ON DELETE SET NULL;
+
+-- Cédula para usuarios (búsqueda e identificación)
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS cedula VARCHAR(20);
+CREATE INDEX IF NOT EXISTS idx_user_profiles_cedula ON user_profiles(cedula);
+
+-- Banco de preguntas por materia (ejecutar en este orden)
+ALTER TABLE questions ADD COLUMN IF NOT EXISTS subject_id UUID REFERENCES subjects(id) ON DELETE CASCADE;
+ALTER TABLE questions ALTER COLUMN exam_id DROP NOT NULL;
+UPDATE questions q SET subject_id = e.subject_id, exam_id = NULL FROM exams e WHERE q.exam_id = e.id AND e.subject_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_questions_subject ON questions(subject_id);
 ```
 
 ---

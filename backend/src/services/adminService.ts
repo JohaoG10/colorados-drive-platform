@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../config/supabase';
+import { deleteUser as deleteAuthUser } from '../services/authService';
 
 export async function createSubject(courseId: string, name: string, orderIndex = 0) {
   const { data, error } = await supabaseAdmin
@@ -40,10 +41,10 @@ export async function createContent(
   return data;
 }
 
-export async function listUsers(filters?: { courseId?: string; cohortId?: string; role?: string }) {
+export async function listUsers(filters?: { courseId?: string; cohortId?: string; role?: string; search?: string }) {
   let query = supabaseAdmin
     .from('user_profiles')
-    .select('id, email, full_name, role, course_id, cohort_id, created_at, courses(name, code), cohorts(id, name, code, course_id)');
+    .select('id, email, full_name, role, course_id, cohort_id, cedula, created_at, courses(name, code), cohorts(id, name, code, course_id)');
 
   if (filters?.cohortId) {
     query = query.eq('cohort_id', filters.cohortId);
@@ -58,6 +59,11 @@ export async function listUsers(filters?: { courseId?: string; cohortId?: string
   }
   if (filters?.role) {
     query = query.eq('role', filters.role);
+  }
+  if (filters?.search && filters.search.trim()) {
+    const term = filters.search.trim();
+    const pattern = `%${term}%`;
+    query = query.or(`cedula.ilike.${pattern},full_name.ilike.${pattern},email.ilike.${pattern}`);
   }
 
   const { data, error } = await query.order('created_at', { ascending: false });
@@ -159,4 +165,27 @@ export async function listCohorts(courseId?: string) {
 export async function deleteCohort(id: string) {
   const { error } = await supabaseAdmin.from('cohorts').delete().eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Elimina el cohort y todos los usuarios (estudiantes) asignados a ese curso.
+ * Libera espacio: borra usuarios en Auth (y en cascada sus intentos, respuestas, actividad).
+ * El admin debe haber descargado el CSV antes.
+ */
+export async function deleteCohortWithUsers(cohortId: string): Promise<{ deletedUsers: number }> {
+  const { data: profiles, error: fetchError } = await supabaseAdmin
+    .from('user_profiles')
+    .select('id, role')
+    .eq('cohort_id', cohortId);
+
+  if (fetchError) throw new Error(fetchError.message);
+
+  const studentIds = (profiles || []).filter((p) => p.role === 'student').map((p) => p.id);
+
+  for (const userId of studentIds) {
+    await deleteAuthUser(userId);
+  }
+
+  await deleteCohort(cohortId);
+  return { deletedUsers: studentIds.length };
 }

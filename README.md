@@ -132,28 +132,31 @@ npm start
 - `GET /api/student/attempts/:attemptId/result` - Ver resultado
 - `GET /api/student/progress` - Progreso general
 
-## Despliegue
+## 🚀 Despliegue
 
-### Backend (Render)
+### Opción Recomendada: Vercel + Railway + Supabase
 
-1. Conecta el repo a [Render](https://render.com).
-2. Crea un **Web Service**:
-   - Build: `cd backend && npm install && npm run build`
-   - Start: `cd backend && npm start`
-3. Añade las variables de entorno en Render.
+**Costo:** $0/mes (gratis para empezar)
 
-### Base de datos
+**Guía rápida:** Ver [DEPLOY.md](DEPLOY.md)
 
-Usa el proyecto Supabase en la nube (ya configurado).
+**Guía completa:** Ver [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
-### Frontend (Vercel o Hostinger estático)
+### Resumen:
 
-- **Vercel**: Despliega un proyecto Next.js o SPA (React/Vite) apuntando a la API en Render.
-- **Hostinger estático**: Build de la SPA (`npm run build`) y sube la carpeta `dist` o `out`.
+1. **Frontend:** [Vercel](https://vercel.com) - Gratis, perfecto para Next.js
+2. **Backend:** [Railway](https://railway.app) - Gratis ($5 crédito/mes)
+3. **Base de datos:** Supabase - Ya configurado, plan gratuito suficiente
 
-### CORS
+### Pasos:
 
-En producción, configura `CORS_ORIGIN` o actualiza el backend para aceptar solo el origen del frontend.
+1. Sube tu código a GitHub
+2. Conecta Vercel para el frontend
+3. Conecta Railway para el backend
+4. Configura variables de entorno
+5. ¡Listo! 🎉
+
+**Nota:** Hostinger básico solo soporta HTML estático, no es adecuado para Next.js ni Node.js. Usa Vercel + Railway en su lugar.
 
 ## Estructura del backend
 

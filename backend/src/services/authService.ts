@@ -63,6 +63,7 @@ export async function createUser(params: {
   courseId?: string | null;
   cohortId?: string | null;
   courseNumber?: string | null;
+  cedula?: string | null;
   mustChangePassword?: boolean;
 }): Promise<{ userId: string; error?: string }> {
   const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
@@ -102,6 +103,7 @@ export async function createUser(params: {
     role: params.role,
     course_id: courseId,
     cohort_id: cohortId,
+    cedula: params.cedula?.trim() || null,
     must_change_password: params.mustChangePassword ?? true,
   });
 
@@ -133,6 +135,7 @@ export async function updateUserProfile(
     courseId?: string | null;
     cohortId?: string | null;
     courseNumber?: string | null;
+    cedula?: string | null;
     password?: string;
   }
 ): Promise<{ error?: string }> {
@@ -166,7 +169,11 @@ export async function updateUserProfile(
         update.cohort_id = null;
       }
     }
-  } else if (params.courseId !== undefined || params.cohortId !== undefined || params.courseNumber !== undefined) {
+  }
+  if (params.cedula !== undefined) {
+    update.cedula = params.cedula?.trim() || null;
+  }
+  if (params.courseId !== undefined || params.cohortId !== undefined || params.courseNumber !== undefined) {
     if (params.cohortId) {
       const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id').eq('id', params.cohortId).single();
       update.course_id = cohort?.course_id ?? null;

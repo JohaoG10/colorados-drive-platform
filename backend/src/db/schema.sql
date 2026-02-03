@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email VARCHAR(255) NOT NULL,
   full_name VARCHAR(150),
+  cedula VARCHAR(20),
   role VARCHAR(20) NOT NULL DEFAULT 'student' CHECK (role IN ('admin', 'student')),
   course_id UUID REFERENCES courses(id) ON DELETE SET NULL,
   cohort_id UUID REFERENCES cohorts(id) ON DELETE SET NULL,
@@ -59,6 +60,8 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_user_profiles_cedula ON user_profiles(cedula);
 
 -- Exams
 CREATE TABLE IF NOT EXISTS exams (
@@ -77,10 +80,11 @@ CREATE TABLE IF NOT EXISTS exams (
   )
 );
 
--- Questions
+-- Questions (banco por materia: subject_id; exámenes por curso: exam_id)
 CREATE TABLE IF NOT EXISTS questions (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  exam_id UUID NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
+  exam_id UUID REFERENCES exams(id) ON DELETE CASCADE,
+  subject_id UUID REFERENCES subjects(id) ON DELETE CASCADE,
   question_text TEXT NOT NULL,
   image_url VARCHAR(500),
   order_index INT DEFAULT 0,
@@ -89,6 +93,8 @@ CREATE TABLE IF NOT EXISTS questions (
   open_text_parts INT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_questions_subject ON questions(subject_id);
 
 -- Options (4 per question, 1 correct)
 CREATE TABLE IF NOT EXISTS options (

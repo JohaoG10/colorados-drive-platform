@@ -283,34 +283,39 @@ export default function AdminCoursesPage() {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-lg font-semibold text-neutral-900">Cursos y materias</h2>
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 text-white shadow-xl shadow-red-600/20">
+        <div className="relative z-10">
+          <h2 className="text-xl font-bold mb-1">Cursos y materias</h2>
+          <p className="text-red-100 text-sm">Tipos de curso, números, materias y contenido teórico.</p>
+        </div>
+      </div>
 
       <div className="flex gap-2 flex-wrap">
         <button
           onClick={() => setTab('courses')}
-          className={`px-4 py-2 rounded-lg font-medium ${tab === 'courses' ? 'bg-red-600 text-white' : 'bg-white border border-neutral-200'}`}
+          className={`px-5 py-2.5 rounded-xl font-medium transition-all duration-200 ${tab === 'courses' ? 'bg-red-600 text-white shadow-md' : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'}`}
         >
           Tipos de curso
         </button>
         <button
           onClick={() => setTab('subjects')}
-          className={`px-4 py-2 rounded-lg font-medium ${tab === 'subjects' ? 'bg-red-600 text-white' : 'bg-white border border-neutral-200'}`}
+          className={`px-5 py-2.5 rounded-xl font-medium transition-all duration-200 ${tab === 'subjects' ? 'bg-red-600 text-white shadow-md' : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'}`}
         >
           Materias
         </button>
         <button
           onClick={() => { setTab('content'); loadContents(); }}
-          className={`px-4 py-2 rounded-lg font-medium ${tab === 'content' ? 'bg-red-600 text-white' : 'bg-white border border-neutral-200'}`}
+          className={`px-5 py-2.5 rounded-xl font-medium transition-all duration-200 ${tab === 'content' ? 'bg-red-600 text-white shadow-md' : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'}`}
         >
           Contenido
         </button>
       </div>
 
       {apiError && (
-        <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-red-700">{apiError}</div>
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 shadow-sm">{apiError}</div>
       )}
       {message && (
-        <div className={`p-3 rounded-lg ${message.includes('cread') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+        <div className={`p-4 rounded-xl shadow-sm ${message.includes('cread') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
           {message}
         </div>
       )}
@@ -321,14 +326,14 @@ export default function AdminCoursesPage() {
             <div className="flex flex-wrap gap-3 items-center">
               <button
                 onClick={() => { setShowCourseForm(true); setShowNumberForm(false); }}
-                className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700"
+                className="px-5 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 shadow-md hover:shadow-lg transition-all duration-200"
               >
                 + Crear tipo de curso
               </button>
               <button
                 onClick={() => { setShowNumberForm(true); setShowCourseForm(false); }}
                 disabled={courses.length === 0}
-                className="px-4 py-2 rounded-lg bg-neutral-700 text-white font-medium hover:bg-neutral-800 disabled:opacity-50"
+                className="px-5 py-2.5 rounded-lg bg-neutral-700 text-white font-medium hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200"
                 title={courses.length === 0 ? 'Primero crea un tipo de curso' : ''}
               >
                 + Crear número de curso
@@ -339,7 +344,7 @@ export default function AdminCoursesPage() {
             </div>
 
             {showCourseForm && (
-              <form onSubmit={createCourse} className="bg-white rounded-xl border p-6 space-y-4">
+              <form onSubmit={createCourse} className="bg-white rounded-xl border border-neutral-200 p-6 space-y-4 shadow-sm hover:shadow-md transition-shadow duration-200">
                 <h3 className="font-semibold text-neutral-900">Crear tipo de curso (Tipo A, Tipo B, etc.)</h3>
                 <div>
                   <label className="block text-sm font-medium mb-1">Nombre del tipo de curso</label>
@@ -353,8 +358,8 @@ export default function AdminCoursesPage() {
                   />
                 </div>
                 <div className="flex gap-2">
-                  <button type="submit" className="px-4 py-2 rounded-lg bg-red-600 text-white">Crear tipo de curso</button>
-                  <button type="button" onClick={() => setShowCourseForm(false)} className="px-4 py-2 rounded-lg border">Cancelar</button>
+                  <button type="submit" className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors">Crear tipo de curso</button>
+                  <button type="button" onClick={() => setShowCourseForm(false)} className="px-4 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-50 transition-colors">Cancelar</button>
                 </div>
               </form>
             )}
@@ -391,33 +396,33 @@ export default function AdminCoursesPage() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button type="submit" className="px-4 py-2 rounded-lg bg-red-600 text-white">Crear número de curso</button>
-                  <button type="button" onClick={() => setShowNumberForm(false)} className="px-4 py-2 rounded-lg border">Cancelar</button>
+                  <button type="submit" className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors">Crear número de curso</button>
+                  <button type="button" onClick={() => setShowNumberForm(false)} className="px-4 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-50 transition-colors">Cancelar</button>
                 </div>
               </form>
             )}
           </div>
 
-          <div className="bg-white rounded-xl border overflow-hidden">
-            <div className="px-6 py-4 border-b bg-neutral-50">
-              <h3 className="font-semibold">Tipos de curso</h3>
+          <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-sm">
+            <div className="px-6 py-4 border-b bg-neutral-50/80">
+              <h3 className="font-semibold text-neutral-900">Tipos de curso</h3>
             </div>
             {loading ? <div className="p-8 text-center text-neutral-500">Cargando...</div> : courses.length === 0 ? (
               <div className="p-8 text-center text-neutral-500">No hay tipos de curso. Crea el primero.</div>
             ) : (
               <table className="w-full">
-                <thead className="bg-neutral-50">
+                <thead className="bg-neutral-50/50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-sm font-semibold">Nombre</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold w-24">Acciones</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Nombre</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700 w-24">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {courses.map((c) => (
-                    <tr key={c.id} className="border-t">
-                      <td className="px-6 py-4 font-medium">{c.name}</td>
+                    <tr key={c.id} className="border-t border-neutral-100 hover:bg-neutral-50/50 transition-colors">
+                      <td className="px-6 py-4 font-medium text-neutral-900">{c.name}</td>
                       <td className="px-6 py-4">
-                        <button onClick={() => deleteCourse(c.id)} className="text-red-600 hover:underline text-sm">Eliminar</button>
+                        <button onClick={() => deleteCourse(c.id)} className="text-red-600 hover:text-red-700 hover:underline text-sm font-medium transition-colors">Eliminar</button>
                       </td>
                     </tr>
                   ))}
@@ -426,26 +431,26 @@ export default function AdminCoursesPage() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl border overflow-hidden">
-            <div className="px-6 py-4 border-b bg-neutral-50">
-              <h3 className="font-semibold">Números de curso creados</h3>
+          <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-sm">
+            <div className="px-6 py-4 border-b bg-neutral-50/80">
+              <h3 className="font-semibold text-neutral-900">Números de curso creados</h3>
             </div>
             {cohorts.length === 0 ? (
               <div className="p-8 text-center text-neutral-500">No hay números de curso. Crea uno arriba.</div>
             ) : (
               <table className="w-full">
-                <thead className="bg-neutral-50">
+                <thead className="bg-neutral-50/50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-sm font-semibold">Curso completo</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold w-24">Acciones</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Curso completo</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700 w-24">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {cohorts.map((co) => (
-                    <tr key={co.id} className="border-t">
-                      <td className="px-6 py-4 font-medium">Curso {co.courses?.name || ''} Nro {co.name}</td>
+                    <tr key={co.id} className="border-t border-neutral-100 hover:bg-neutral-50/50 transition-colors">
+                      <td className="px-6 py-4 font-medium text-neutral-900">{co.courses?.name || 'Curso'} Nro {co.name}</td>
                       <td className="px-6 py-4">
-                        <button onClick={() => deleteCohort(co.id)} className="text-red-600 hover:underline text-sm">Eliminar</button>
+                        <button onClick={() => deleteCohort(co.id)} className="text-red-600 hover:text-red-700 hover:underline text-sm font-medium transition-colors">Eliminar</button>
                       </td>
                     </tr>
                   ))}
@@ -480,7 +485,7 @@ export default function AdminCoursesPage() {
           </div>
 
           {showSubjectForm && (
-            <form onSubmit={createSubject} className="bg-white rounded-xl border p-6 space-y-4">
+            <form onSubmit={createSubject} className="bg-white rounded-xl border border-neutral-200 p-6 space-y-4 shadow-sm hover:shadow-md transition-shadow duration-200">
               <div>
                 <label className="block text-sm font-medium mb-1">Curso</label>
                 <select
@@ -507,31 +512,31 @@ export default function AdminCoursesPage() {
                 />
               </div>
               <div className="flex gap-2">
-                <button type="submit" className="px-4 py-2 rounded-lg bg-red-600 text-white">Crear</button>
-                <button type="button" onClick={() => setShowSubjectForm(false)} className="px-4 py-2 rounded-lg border">Cancelar</button>
+                <button type="submit" className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors">Crear</button>
+                <button type="button" onClick={() => setShowSubjectForm(false)} className="px-4 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-50 transition-colors">Cancelar</button>
               </div>
             </form>
           )}
 
-          <div className="bg-white rounded-xl border overflow-hidden">
+          <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-sm">
             {loading ? (
               <div className="p-8 text-center text-neutral-500">Cargando...</div>
             ) : (
               <table className="w-full">
-                <thead className="bg-neutral-50">
+                <thead className="bg-neutral-50/50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-sm font-semibold">Materia</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold">Curso</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold w-24">Acciones</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Materia</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Curso</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700 w-24">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredSubjects.map((s) => (
-                    <tr key={s.id} className="border-t">
-                      <td className="px-6 py-4 font-medium">{s.name}</td>
+                    <tr key={s.id} className="border-t border-neutral-100 hover:bg-neutral-50/50 transition-colors">
+                      <td className="px-6 py-4 font-medium text-neutral-900">{s.name}</td>
                       <td className="px-6 py-4 text-neutral-600">{s.courses ? `${s.courses.name} (${s.courses.code})` : '-'}</td>
                       <td className="px-6 py-4">
-                        <button onClick={() => deleteSubject(s.id)} className="text-red-600 hover:underline text-sm">Eliminar</button>
+                        <button onClick={() => deleteSubject(s.id)} className="text-red-600 hover:text-red-700 hover:underline text-sm font-medium transition-colors">Eliminar</button>
                       </td>
                     </tr>
                   ))}
@@ -573,14 +578,14 @@ export default function AdminCoursesPage() {
             <button
               onClick={() => { setShowContentForm(true); loadContents(); }}
               disabled={!selectedSubject}
-              className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50"
+              className="px-5 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 shadow-md hover:shadow-lg transition-all duration-200"
             >
               Crear contenido
             </button>
           </div>
 
           {showContentForm && selectedSubject && (
-            <form onSubmit={createContent} className="bg-white rounded-xl border p-6 space-y-4">
+            <form onSubmit={createContent} className="bg-white rounded-xl border border-neutral-200 p-6 space-y-4 shadow-sm hover:shadow-md transition-shadow duration-200">
               <input type="hidden" value={selectedSubject} onChange={() => {}} />
               <div>
                 <label className="block text-sm font-medium mb-1">Título</label>
@@ -632,25 +637,25 @@ export default function AdminCoursesPage() {
                 )}
               </div>
               <div className="flex gap-2">
-                <button type="submit" className="px-4 py-2 rounded-lg bg-red-600 text-white">Crear</button>
-                <button type="button" onClick={() => setShowContentForm(false)} className="px-4 py-2 rounded-lg border">Cancelar</button>
+                <button type="submit" className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors">Crear</button>
+                <button type="button" onClick={() => setShowContentForm(false)} className="px-4 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-50 transition-colors">Cancelar</button>
               </div>
             </form>
           )}
 
-          <div className="bg-white rounded-xl border overflow-hidden">
+          <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-sm">
             {contents.length === 0 && selectedSubject ? (
               <div className="p-8 text-center text-neutral-500">Sin contenido. Crea el primero.</div>
             ) : (
               <ul className="divide-y">
                 {contents.map((c) => (
-                  <li key={c.id} className="px-6 py-4 flex justify-between items-start">
+                  <li key={c.id} className="px-6 py-4 flex justify-between items-start border-b border-neutral-100 last:border-0 hover:bg-neutral-50/50 transition-colors">
                     <div>
-                      <p className="font-medium">{c.title}</p>
+                      <p className="font-medium text-neutral-900">{c.title}</p>
                       {c.external_link && <a href={c.external_link} target="_blank" rel="noopener noreferrer" className="text-sm text-red-600 hover:underline block">{c.external_link}</a>}
                       {c.file_url && <a href={c.file_url} target="_blank" rel="noopener noreferrer" className="text-sm text-red-600 hover:underline block">📎 Ver archivo adjunto</a>}
                     </div>
-                    <button onClick={() => deleteContent(c.id)} className="text-red-600 hover:underline text-sm shrink-0">Eliminar</button>
+                    <button onClick={() => deleteContent(c.id)} className="text-red-600 hover:text-red-700 hover:underline text-sm font-medium shrink-0 transition-colors">Eliminar</button>
                   </li>
                 ))}
               </ul>

@@ -20,6 +20,7 @@ router.post(
     body('fullName').trim().notEmpty(),
     body('role').isIn(['admin', 'student']),
     body('cohortId').optional().isUUID(),
+    body('cedula').optional().trim().isString(),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);
@@ -28,7 +29,7 @@ router.post(
       return;
     }
 
-    const { email, password, fullName, role, cohortId } = req.body;
+    const { email, password, fullName, role, cohortId, cedula } = req.body;
 
     if (role === 'student' && !cohortId) {
       res.status(400).json({ error: 'Para estudiante selecciona un curso (Curso Tipo A/B Nro X). Créalo antes en Reportes por curso.' });
@@ -42,6 +43,7 @@ router.post(
       role,
       courseId: null,
       cohortId: role === 'student' ? cohortId : null,
+      cedula: cedula?.trim() || null,
       mustChangePassword: true,
     });
 
@@ -58,9 +60,10 @@ router.get('/users', async (req: AuthenticatedRequest, res: Response) => {
   const courseId = req.query.courseId as string | undefined;
   const cohortId = req.query.cohortId as string | undefined;
   const role = req.query.role as string | undefined;
+  const search = req.query.search as string | undefined; // busca por cédula, nombre o email
 
   try {
-    const users = await adminService.listUsers({ courseId, cohortId, role });
+    const users = await adminService.listUsers({ courseId, cohortId, role, search });
     res.json(users);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
@@ -103,6 +106,7 @@ router.patch(
     body('fullName').optional().trim().notEmpty(),
     body('role').optional().isIn(['admin', 'student']),
     body('cohortId').optional().isUUID(),
+    body('cedula').optional().trim().isString(),
     body('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
@@ -111,7 +115,7 @@ router.patch(
       res.status(400).json({ errors: errors.array() });
       return;
     }
-    const { fullName, role, cohortId, password } = req.body;
+    const { fullName, role, cohortId, cedula, password } = req.body;
     if (role === 'student' && !cohortId) {
       res.status(400).json({ error: 'Para estudiante selecciona un curso (Curso Tipo A/B Nro X)' });
       return;
@@ -121,6 +125,7 @@ router.patch(
       role,
       courseId: null,
       cohortId: cohortId ?? null,
+      cedula: cedula !== undefined ? (cedula?.trim() || null) : undefined,
       password,
     });
     if (result.error) {
@@ -206,9 +211,15 @@ router.delete('/cohorts/:id', [param('id').isUUID()], async (req: AuthenticatedR
     res.status(400).json({ errors: errors.array() });
     return;
   }
+  const deleteUsers = req.query.deleteUsers === 'true';
   try {
-    await adminService.deleteCohort(req.params.id);
-    res.json({ message: 'Cohort deleted' });
+    if (deleteUsers) {
+      const result = await adminService.deleteCohortWithUsers(req.params.id);
+      res.json({ message: 'Cohort and all its users deleted', deletedUsers: result.deletedUsers });
+    } else {
+      await adminService.deleteCohort(req.params.id);
+      res.json({ message: 'Cohort deleted (users unassigned)' });
+    }
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
@@ -398,6 +409,34 @@ router.post(
     }
   }
 );
+
+router.get('/exams/:id/questions', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return;
+  }
+  try {
+    const exam = await examService.getExamWithQuestions(req.params.id);
+    res.json(exam);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.delete('/questions/:id', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return;
+  }
+  try {
+    await examService.deleteQuestion(req.params.id);
+    res.json({ message: 'Question deleted' });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
 
 router.post(
   '/exams/:id/questions',

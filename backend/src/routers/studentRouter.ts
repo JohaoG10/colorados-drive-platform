@@ -134,17 +134,40 @@ router.post(
       res.status(403).json({ error: 'Exam not available for your course' });
       return;
     }
-    const already = await examService.hasAttempt(examId, req.user.id);
-    if (already) {
-      res.status(400).json({ error: 'Exam already attempted (one attempt allowed)' });
-      return;
-    }
     try {
+      const existing = await examService.getExistingAttempt(examId, req.user.id);
+      if (existing) {
+        if (existing.finished_at) {
+          res.status(400).json({ error: 'already attempted' });
+          return;
+        }
+        const examData = await examService.getExamForStudent(examId);
+        res.status(200).json({ attemptId: existing.id, ...examData });
+        return;
+      }
       const attempt = await examService.createAttempt(examId, req.user.id);
       const examData = await examService.getExamForStudent(examId);
       res.status(201).json({ attemptId: attempt.id, ...examData });
     } catch (e) {
-      res.status(500).json({ error: (e as Error).message });
+      const msg = (e as Error).message;
+      const isDuplicate = /duplicate key|unique constraint.*exam_attempts_exam_id_user_id/i.test(msg);
+      if (isDuplicate) {
+        try {
+          const existing = await examService.getExistingAttempt(examId, req.user.id);
+          if (existing) {
+            if (existing.finished_at) {
+              res.status(400).json({ error: 'already attempted' });
+              return;
+            }
+            const examData = await examService.getExamForStudent(examId);
+            res.status(200).json({ attemptId: existing.id, ...examData });
+            return;
+          }
+        } catch {
+          // fallback
+        }
+      }
+      res.status(500).json({ error: msg.includes('duplicate') || msg.includes('unique constraint') ? 'already attempted' : msg });
     }
   }
 );
@@ -219,6 +242,28 @@ router.get(
       res.json(result);
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.get(
+  '/attempts/:attemptId/detail',
+  [param('attemptId').isUUID()],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    if (!req.user?.id) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+    try {
+      const detail = await examService.getAttemptDetailForStudent(req.params.attemptId, req.user.id);
+      res.json(detail);
+    } catch (e) {
+      res.status(404).json({ error: (e as Error).message });
     }
   }
 );

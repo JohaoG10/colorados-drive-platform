@@ -27,9 +27,12 @@ export default function TakeExamPage() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!token || !examId) return;
+    setLoading(true);
+    setError('');
     fetch(`${API_URL}/api/student/exams/${examId}/start`, {
       method: 'POST',
       headers: getAuthHeaders(token),
@@ -37,42 +40,27 @@ export default function TakeExamPage() {
       .then((r) => r.json())
       .then((data) => {
         if (data.error) {
-          if (data.error.includes('already attempted')) {
-            router.push(`/student/exams/${examId}/result`);
+          const err = String(data.error).toLowerCase();
+          if (err.includes('already attempted') || err.includes('duplicate') || err.includes('unique constraint')) {
+            router.replace(`/student/exams/${examId}/result`);
+            return;
           }
-          setError(data.error);
+          setError('No se pudo cargar el examen. Si ya lo rendiste, ve a Ver resultado desde la lista de exámenes.');
+          setLoading(false);
           return;
         }
         setAttemptId(data.attemptId);
         setExam({ id: data.id, title: data.title, questions: data.questions || [] });
+        setLoading(false);
       })
-      .catch(() => setError('Error al cargar el examen'));
+      .catch(() => {
+        setError('Error al cargar el examen. Intenta de nuevo.');
+        setLoading(false);
+      });
   }, [token, examId, router]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!token || !attemptId || !exam) return;
-    const answerList = exam.questions.map((q) => {
-      const isOpen = q.type === 'open_text';
-      const parts = q.openTextParts ?? 1;
-      if (isOpen && parts > 1) {
-        const textAnswers = Array.from({ length: parts }, (_, i) => (answers[`${q.id}_${i}`] ?? '').trim());
-        return { questionId: q.id, textAnswers };
-      }
-      if (isOpen) {
-        return { questionId: q.id, textAnswer: (answers[q.id] ?? '').trim() };
-      }
-      return { questionId: q.id, optionId: answers[q.id] ?? '' };
-    });
-    const missing = answerList.filter((a) => {
-      if ('optionId' in a) return !(a as { optionId: string }).optionId;
-      if ('textAnswers' in a) return (a as { textAnswers: string[] }).textAnswers.some((t) => !t);
-      return !(a as { textAnswer: string }).textAnswer?.trim();
-    });
-    if (missing.length > 0) {
-      setError(`Responde todas las preguntas (${exam.questions.length - missing.length}/${exam.questions.length})`);
-      return;
-    }
+  const doSubmit = async (answerList: { questionId: string; optionId?: string; textAnswer?: string; textAnswers?: string[] }[]) => {
+    if (!token || !attemptId) return;
     setSubmitting(true);
     setError('');
     try {
@@ -91,6 +79,46 @@ export default function TakeExamPage() {
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || !attemptId || !exam) return;
+    const answerList = exam.questions.map((q) => {
+      const isOpen = q.type === 'open_text';
+      const parts = q.openTextParts ?? 1;
+      if (isOpen && parts > 1) {
+        const textAnswers = Array.from({ length: parts }, (_, i) => (answers[`${q.id}_${i}`] ?? '').trim());
+        return { questionId: q.id, textAnswers };
+      }
+      if (isOpen) {
+        return { questionId: q.id, textAnswer: (answers[q.id] ?? '').trim() };
+      }
+      return { questionId: q.id, optionId: answers[q.id] ?? '' };
+    });
+    const missingCount = answerList.filter((a) => {
+      if ('optionId' in a) return !(a as { optionId: string }).optionId;
+      if ('textAnswers' in a) return (a as { textAnswers: string[] }).textAnswers.every((t) => !t);
+      return !(a as { textAnswer: string }).textAnswer?.trim();
+    }).length;
+    if (missingCount > 0) {
+      const confirmar = window.confirm(
+        `¿Deseas enviar el examen con ${missingCount} pregunta${missingCount === 1 ? '' : 's'} sin responder? Las preguntas no respondidas se calificarán como incorrectas.`
+      );
+      if (!confirmar) return;
+    }
+    await doSubmit(answerList);
+  };
+
+  if (loading || (!exam && !error)) {
+    return (
+      <div className="flex justify-center py-12">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-neutral-500">Cargando examen...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (error && !exam) {
     return (
       <div className="max-w-2xl mx-auto">
@@ -105,11 +133,7 @@ export default function TakeExamPage() {
   }
 
   if (!exam) {
-    return (
-      <div className="flex justify-center py-12">
-        <div className="animate-pulse text-neutral-500">Cargando examen...</div>
-      </div>
-    );
+    return null;
   }
 
   return (

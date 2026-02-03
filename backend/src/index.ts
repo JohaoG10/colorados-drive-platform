@@ -10,7 +10,10 @@ import studentRouter from './routers/studentRouter';
 const app = express();
 
 app.use(helmet());
-app.use(cors({ origin: config.nodeEnv === 'development' ? '*' : undefined }));
+app.use(cors({ 
+  origin: config.corsOrigin === '*' ? '*' : config.corsOrigin || (config.nodeEnv === 'development' ? '*' : undefined),
+  credentials: true,
+}));
 app.use(morgan('combined'));
 app.use(express.json({ limit: '50mb' }));
 

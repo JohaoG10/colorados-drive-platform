@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAuthHeaders } from '@/lib/api';
@@ -8,11 +8,26 @@ import Link from 'next/link';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+interface QuestionItem {
+  id: string;
+  question_text: string;
+  type?: string;
+}
+
+interface ExamWithQuestions {
+  id: string;
+  title: string;
+  subject_id: string | null;
+  course_id: string | null;
+  question_count: number;
+  questions: QuestionItem[];
+}
+
 export default function AddExamQuestionsPage() {
   const params = useParams();
   const { token } = useAuth();
   const examId = params.id as string;
-  const [examTitle, setExamTitle] = useState('');
+  const [exam, setExam] = useState<ExamWithQuestions | null>(null);
   const [form, setForm] = useState({
     questionText: '',
     imageUrl: '',
@@ -102,7 +117,7 @@ export default function AddExamQuestionsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error');
-      setMessage('Pregunta agregada correctamente');
+      setMessage('Pregunta agregada al banco correctamente');
       setForm({
         questionText: '',
         imageUrl: '',
@@ -113,35 +128,90 @@ export default function AddExamQuestionsPage() {
         options: ['', '', '', ''],
         correctIndex: 0,
       });
+      loadExam();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Error');
     }
   };
 
-  useEffect(() => {
+  const loadExam = useCallback(() => {
     if (!token || !examId) return;
-    fetch(`${API_URL}/api/admin/exams`, { headers: getAuthHeaders(token) })
+    fetch(`${API_URL}/api/admin/exams/${examId}/questions`, { headers: getAuthHeaders(token) })
       .then((r) => r.json())
-      .then((exams: { id: string; title: string }[]) => {
-        const ex = exams?.find((e) => e.id === examId);
-        if (ex) setExamTitle(ex.title);
-      });
+      .then((data) => {
+        if (data.id && data.questions) setExam(data);
+        else setExam(null);
+      })
+      .catch(() => setExam(null));
   }, [token, examId]);
 
+  useEffect(() => {
+    loadExam();
+  }, [loadExam]);
+
+  const deleteQuestion = async (qId: string) => {
+    if (!confirm('¿Eliminar esta pregunta del banco?')) return;
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_URL}/api/admin/questions/${qId}`, { method: 'DELETE', headers: getAuthHeaders(token) });
+      if (!res.ok) throw new Error('Error');
+      setMessage('Pregunta eliminada');
+      loadExam();
+    } catch {
+      setMessage('Error al eliminar');
+    }
+  };
+
+  const isBankMode = exam?.subject_id != null;
+
   return (
-    <div className="max-w-3xl mx-auto">
-      <Link href="/admin/exams" className="text-neutral-500 hover:text-neutral-700 text-sm flex items-center gap-1 mb-6">
-        ← Volver a exámenes
+    <div className="max-w-3xl mx-auto space-y-6">
+      <Link href="/admin/exams" className="inline-flex items-center gap-1 text-sm text-neutral-500 hover:text-red-600 transition-colors">
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        Volver a exámenes
       </Link>
 
-      <div className="mb-8">
-        <h1 className="text-xl font-bold text-neutral-900">Agregar preguntas</h1>
-        <p className="text-neutral-500 text-sm mt-1">{examTitle || 'Cargando...'}</p>
+      <div className="rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 text-white shadow-xl shadow-red-600/20">
+        <h1 className="text-xl font-bold">
+          {isBankMode ? 'Banco de preguntas' : 'Agregar preguntas'}
+        </h1>
+        <p className="text-red-100 text-sm mt-1">
+          {exam?.title || 'Cargando...'}
+          {isBankMode && exam && (
+            <span className="ml-0 mt-2 block sm:inline sm:mt-0">
+              · {exam.questions.length} en el banco · se eligen {exam.question_count} al azar por estudiante
+            </span>
+          )}
+        </p>
       </div>
 
-      <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
+      {exam && exam.questions.length > 0 && (
+        <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-neutral-100 bg-neutral-50/80">
+            <h2 className="font-semibold text-neutral-900">
+              {isBankMode ? `Preguntas en el banco (${exam.questions.length})` : `Preguntas del examen (${exam.questions.length})`}
+            </h2>
+            {isBankMode && (
+              <p className="text-sm text-neutral-500 mt-0.5">Cada estudiante recibe {exam.question_count} preguntas aleatorias de este banco</p>
+            )}
+          </div>
+          <ul className="divide-y">
+            {exam.questions.map((q) => (
+              <li key={q.id} className="px-6 py-4 flex justify-between items-start gap-4">
+                <p className="text-sm text-neutral-700 flex-1 line-clamp-2">{q.question_text}</p>
+                <span className="text-xs text-neutral-400 shrink-0">{q.type === 'open_text' ? 'Abierta' : 'Opción múltiple'}</span>
+                <button type="button" onClick={() => deleteQuestion(q.id)} className="text-red-600 hover:text-red-700 text-sm shrink-0">Eliminar</button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
         {message && (
-          <div className={`p-4 mx-6 mt-6 rounded-lg ${message.includes('agregad') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+          <div className={`p-4 mx-6 mt-6 rounded-xl border ${message.includes('agregad') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
             {message}
           </div>
         )}
@@ -316,7 +386,7 @@ export default function AddExamQuestionsPage() {
               type="submit"
               className="px-6 py-3 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 transition-colors"
             >
-              Agregar pregunta
+              {isBankMode ? 'Agregar al banco' : 'Agregar pregunta'}
             </button>
             <Link
               href="/admin/exams"

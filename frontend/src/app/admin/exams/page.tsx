@@ -101,7 +101,7 @@ export default function AdminExamsPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error');
-      setMessage('Examen creado. Agrega preguntas desde el detalle.');
+      setMessage(scope === 'subject' ? 'Examen creado. Gestiona el banco de preguntas de la materia.' : 'Examen creado. Agrega preguntas desde el detalle.');
       setForm({ title: '', subjectId: '', courseId: '', questionCount: 10, passingScore: 70 });
       setShowForm(false);
       load();
@@ -133,17 +133,19 @@ export default function AdminExamsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-lg font-semibold text-neutral-900">Exámenes</h2>
-          <p className="text-sm text-neutral-500 mt-0.5">Crea exámenes por materia o por curso y agrega preguntas</p>
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 text-white shadow-xl shadow-red-600/20">
+        <div className="relative z-10 flex flex-wrap justify-between items-start gap-4">
+          <div>
+            <h2 className="text-xl font-bold mb-1">Exámenes</h2>
+            <p className="text-red-100 text-sm">Crea exámenes por materia o por curso y gestiona el banco de preguntas.</p>
+          </div>
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className={`px-4 py-2.5 rounded-xl font-medium transition-all ${showForm ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-white text-red-600 hover:bg-neutral-100'}`}
+          >
+            {showForm ? 'Cancelar' : '+ Crear examen'}
+          </button>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className={`px-4 py-2 rounded-lg font-medium transition-colors ${showForm ? 'bg-neutral-200 text-neutral-700 hover:bg-neutral-300' : 'bg-red-600 text-white hover:bg-red-700'}`}
-        >
-          {showForm ? 'Cancelar' : '+ Crear examen'}
-        </button>
       </div>
 
       {apiError && (
@@ -261,7 +263,7 @@ export default function AdminExamsPage() {
         </form>
       )}
 
-      <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm overflow-hidden">
         {loading ? (
           <div className="p-12 text-center text-neutral-500">Cargando exámenes...</div>
         ) : exams.length === 0 ? (
@@ -308,7 +310,7 @@ export default function AdminExamsPage() {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                         </svg>
-                        Agregar preguntas
+                        {ex.subject_id ? 'Gestionar banco de preguntas' : 'Agregar preguntas'}
                       </Link>
                       <button onClick={() => deleteExam(ex.id)} className="text-red-600 hover:underline text-sm">
                         Eliminar

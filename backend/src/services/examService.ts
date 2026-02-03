@@ -48,56 +48,65 @@ export async function deleteExam(id: string) {
   if (error) throw new Error(error.message);
 }
 
+export async function deleteQuestion(questionId: string) {
+  const { error } = await supabaseAdmin.from('questions').delete().eq('id', questionId);
+  if (error) throw new Error(error.message);
+}
+
+async function getQuestionInsertContext(examId: string): Promise<{ subjectId: string | null; examId: string | null }> {
+  const { data: exam, error } = await supabaseAdmin
+    .from('exams')
+    .select('subject_id, course_id')
+    .eq('id', examId)
+    .single();
+  if (error || !exam) throw new Error('Exam not found');
+  if (exam.subject_id) return { subjectId: exam.subject_id, examId: null };
+  return { subjectId: null, examId };
+}
+
+async function getNextOrderIndex(subjectId: string | null, examId: string | null): Promise<number> {
+  const col = subjectId ? 'subject_id' : 'exam_id';
+  const val = subjectId || examId;
+  const { data: questions } = await supabaseAdmin
+    .from('questions')
+    .select('order_index')
+    .eq(col, val)
+    .order('order_index', { ascending: false })
+    .limit(1);
+  return questions?.length ? (questions[0].order_index ?? 0) + 1 : 0;
+}
+
 export async function addQuestion(examId: string, params: CreateQuestionParams) {
+  const { subjectId, examId: targetExamId } = await getQuestionInsertContext(examId);
+  const nextOrder = await getNextOrderIndex(subjectId, targetExamId ?? null);
+
   const type = params.type || 'multiple_choice';
+  const insertRow: Record<string, unknown> = {
+    subject_id: subjectId || null,
+    exam_id: targetExamId || null,
+    question_text: params.questionText,
+    image_url: params.imageUrl || null,
+    order_index: nextOrder,
+  };
+
   if (type === 'open_text') {
     const parts = params.correctAnswerParts && params.correctAnswerParts.length > 0
       ? params.correctAnswerParts.map((p) => (p || '').trim()).filter(Boolean)
       : (params.correctAnswerText ? [params.correctAnswerText.trim()] : []);
     const openTextParts = Math.max(1, parts.length);
     const correctAnswerText = parts.join('|||');
-    const { data: questions } = await supabaseAdmin
-      .from('questions')
-      .select('order_index')
-      .eq('exam_id', examId)
-      .order('order_index', { ascending: false })
-      .limit(1);
-    const nextOrder = questions?.length ? (questions[0].order_index ?? 0) + 1 : 0;
     const { data: question, error: qErr } = await supabaseAdmin
       .from('questions')
-      .insert({
-        exam_id: examId,
-        question_text: params.questionText,
-        image_url: params.imageUrl || null,
-        order_index: nextOrder,
-        type: 'open_text',
-        correct_answer_text: correctAnswerText || null,
-        open_text_parts: openTextParts,
-      })
+      .insert({ ...insertRow, type: 'open_text', correct_answer_text: correctAnswerText || null, open_text_parts: openTextParts })
       .select()
       .single();
     if (qErr || !question) throw new Error(qErr?.message || 'Failed to create question');
     return { ...question, options: [] };
   }
 
-  const { data: questions } = await supabaseAdmin
-    .from('questions')
-    .select('order_index')
-    .eq('exam_id', examId)
-    .order('order_index', { ascending: false })
-    .limit(1);
-
-  const nextOrder = questions?.length ? (questions[0].order_index ?? 0) + 1 : 0;
-
   const { data: question, error: qErr } = await supabaseAdmin
     .from('questions')
-    .insert({
-      exam_id: examId,
-      question_text: params.questionText,
-      image_url: params.imageUrl || null,
-      order_index: nextOrder,
-      type: 'multiple_choice',
-    })
+    .insert({ ...insertRow, type: 'multiple_choice' })
     .select()
     .single();
 
@@ -116,6 +125,20 @@ export async function addQuestion(examId: string, params: CreateQuestionParams) 
   return { ...question, options: optionsToInsert };
 }
 
+async function loadQuestionsForExam(exam: { id: string; subject_id: string | null; course_id: string | null }) {
+  let query = supabaseAdmin
+    .from('questions')
+    .select('id, question_text, image_url, order_index, type, correct_answer_text, open_text_parts');
+  if (exam.subject_id) {
+    query = query.eq('subject_id', exam.subject_id);
+  } else {
+    query = query.eq('exam_id', exam.id);
+  }
+  const { data: questions, error: qErr } = await query.order('order_index');
+  if (qErr) throw new Error(qErr.message);
+  return questions || [];
+}
+
 export async function getExamWithQuestions(examId: string) {
   const { data: exam, error: examErr } = await supabaseAdmin
     .from('exams')
@@ -125,16 +148,10 @@ export async function getExamWithQuestions(examId: string) {
 
   if (examErr || !exam) throw new Error(examErr?.message || 'Exam not found');
 
-  const { data: questions, error: qErr } = await supabaseAdmin
-    .from('questions')
-    .select('id, question_text, image_url, order_index, type, correct_answer_text, open_text_parts')
-    .eq('exam_id', examId)
-    .order('order_index');
-
-  if (qErr) throw new Error(qErr.message);
+  const questions = await loadQuestionsForExam(exam);
 
   const questionsWithOptions = await Promise.all(
-    (questions || []).map(async (q) => {
+    questions.map(async (q: { id: string; type?: string }) => {
       const qType = (q as { type?: string }).type || 'multiple_choice';
       if (qType === 'open_text') return { ...q, options: [] };
       const { data: opts } = await supabaseAdmin
@@ -150,26 +167,51 @@ export async function getExamWithQuestions(examId: string) {
 }
 
 export async function getExamForStudent(examId: string) {
-  const exam = await getExamWithQuestions(examId);
+  const { data: exam, error: examErr } = await supabaseAdmin
+    .from('exams')
+    .select('id, title, question_count, subject_id, course_id')
+    .eq('id', examId)
+    .single();
+  if (examErr || !exam) throw new Error('Exam not found');
+
+  const rawQuestions = await loadQuestionsForExam(exam);
+  const count = Math.min(exam.question_count, rawQuestions.length);
+  if (count === 0) {
+    throw new Error('No hay preguntas en el banco para este examen. Contacta al administrador.');
+  }
+
+  const shuffled = [...rawQuestions].sort(() => Math.random() - 0.5).slice(0, count);
+
+  const questionsWithOptions = await Promise.all(
+    shuffled.map(async (q: { id: string; question_text: string; image_url?: string; type?: string; open_text_parts?: number }) => {
+      const qType = q.type || 'multiple_choice';
+      if (qType === 'open_text') return { ...q, options: [] };
+      const { data: opts } = await supabaseAdmin
+        .from('options')
+        .select('id, option_text, order_index')
+        .eq('question_id', q.id)
+        .order('order_index');
+      return { ...q, options: opts || [] };
+    })
+  );
+
   type Q = { id: string; question_text: string; image_url?: string; type?: string; options: { id: string; option_text: string }[] };
   type QWithParts = Q & { open_text_parts?: number };
-  const shuffled = (exam.questions as QWithParts[])
-    .sort(() => Math.random() - 0.5)
-    .slice(0, exam.question_count)
-    .map((q) => {
-      const type = q.type || 'multiple_choice';
-      return {
-        id: q.id,
-        questionText: q.question_text,
-        imageUrl: q.image_url,
-        type,
-        openTextParts: type === 'open_text' ? Math.max(1, q.open_text_parts ?? 1) : undefined,
-        options: type === 'multiple_choice'
-          ? (q.options || []).sort(() => Math.random() - 0.5).map((o) => ({ id: o.id, text: o.option_text }))
-          : [],
-      };
-    });
-  return { id: exam.id, title: exam.title, questions: shuffled };
+  const questions = (questionsWithOptions as QWithParts[]).map((q) => {
+    const type = q.type || 'multiple_choice';
+    return {
+      id: q.id,
+      questionText: q.question_text,
+      imageUrl: q.image_url,
+      type,
+      openTextParts: type === 'open_text' ? Math.max(1, q.open_text_parts ?? 1) : undefined,
+      options: type === 'multiple_choice'
+        ? (q.options || []).sort(() => Math.random() - 0.5).map((o) => ({ id: o.id, text: o.option_text }))
+        : [],
+    };
+  });
+
+  return { id: exam.id, title: exam.title, questions };
 }
 
 export async function hasAttempt(examId: string, userId: string): Promise<boolean> {
@@ -182,6 +224,18 @@ export async function hasAttempt(examId: string, userId: string): Promise<boolea
   return !error && !!data;
 }
 
+/** Obtiene el intento existente (si existe) para un usuario y examen */
+export async function getExistingAttempt(examId: string, userId: string): Promise<{ id: string; finished_at: string | null } | null> {
+  const { data, error } = await supabaseAdmin
+    .from('exam_attempts')
+    .select('id, finished_at')
+    .eq('exam_id', examId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data;
+}
+
 export async function createAttempt(examId: string, userId: string) {
   const { data, error } = await supabaseAdmin
     .from('exam_attempts')
@@ -189,7 +243,14 @@ export async function createAttempt(examId: string, userId: string) {
     .select()
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    const isDuplicate = error.code === '23505' || /duplicate key|unique constraint.*exam_attempts_exam_id_user_id/i.test(error.message);
+    if (isDuplicate) {
+      const existing = await getExistingAttempt(examId, userId);
+      if (existing) return { id: existing.id, exam_id: examId, user_id: userId, started_at: new Date().toISOString(), finished_at: existing.finished_at, score: null, passed: null };
+    }
+    throw new Error(error.message);
+  }
   return data;
 }
 
@@ -480,6 +541,82 @@ export async function getAttemptDetailForAdmin(attemptId: string) {
   return {
     attempt: { id: attempt.id, score: attempt.score, passed: attempt.passed, finished_at: attempt.finished_at },
     user: { email: profile?.email ?? '', fullName: profile?.full_name ?? '' },
+    answers: detailAnswers,
+  };
+}
+
+/** Detalle del intento para el propio estudiante (ver en qué se equivocó) */
+export async function getAttemptDetailForStudent(attemptId: string, userId: string) {
+  const { data: attempt, error: attErr } = await supabaseAdmin
+    .from('exam_attempts')
+    .select('id, exam_id, user_id, score, passed, started_at, finished_at')
+    .eq('id', attemptId)
+    .eq('user_id', userId)
+    .single();
+
+  if (attErr || !attempt) throw new Error('Attempt not found');
+  if (!attempt.finished_at) throw new Error('Attempt not yet finished');
+
+  const { data: answers, error: ansErr } = await supabaseAdmin
+    .from('attempt_answers')
+    .select('question_id, option_id, text_answer, is_correct')
+    .eq('attempt_id', attemptId)
+    .order('question_id');
+
+  if (ansErr) throw new Error(ansErr.message);
+
+  const questionIds = [...new Set((answers || []).map((a) => a.question_id))];
+  const { data: questions } = await supabaseAdmin
+    .from('questions')
+    .select('id, question_text, type, correct_answer_text')
+    .in('id', questionIds);
+
+  const questionMap = new Map((questions || []).map((q) => [q.id, q]));
+
+  const optionIds = (answers || []).map((a) => a.option_id).filter(Boolean) as string[];
+  const { data: options } = optionIds.length
+    ? await supabaseAdmin.from('options').select('id, question_id, option_text, is_correct').in('id', optionIds)
+    : { data: [] as { id: string; question_id: string; option_text: string; is_correct: boolean }[] };
+
+  const allQuestionIdsForCorrect = [...new Set((options || []).map((o) => o.question_id))];
+  const { data: correctOptions } = allQuestionIdsForCorrect.length
+    ? await supabaseAdmin.from('options').select('id, question_id, option_text').eq('is_correct', true).in('question_id', allQuestionIdsForCorrect)
+    : { data: [] as { question_id: string; option_text: string }[] };
+  const correctByQuestion = new Map((correctOptions || []).map((o) => [o.question_id, o.option_text]));
+  const optionTextById = new Map((options || []).map((o) => [o.id, o.option_text]));
+
+  const detailAnswers: AttemptDetailAnswer[] = (answers || []).map((a) => {
+    const q = questionMap.get(a.question_id) as { question_text: string; type?: string; correct_answer_text?: string } | undefined;
+    const questionText = q?.question_text ?? 'Pregunta';
+    const isCorrect = a.is_correct === true;
+    let studentAnswer = '';
+    let correctAnswer = '';
+
+    if (a.option_id) {
+      studentAnswer = optionTextById.get(a.option_id) ?? '(opción seleccionada)';
+      correctAnswer = correctByQuestion.get(a.question_id) ?? '(respuesta correcta)';
+    } else {
+      try {
+        const raw = a.text_answer;
+        if (raw && raw.startsWith('[')) {
+          const arr = JSON.parse(raw) as string[];
+          studentAnswer = Array.isArray(arr) ? arr.join(' | ') : raw;
+        } else {
+          studentAnswer = raw ?? '';
+        }
+      } catch {
+        studentAnswer = a.text_answer ?? '';
+      }
+      const modelText = q?.correct_answer_text ?? '';
+      const parts = modelText.split('|||').map((p) => p.split(/\r?\n/)[0]?.trim()).filter(Boolean);
+      correctAnswer = parts.length > 1 ? parts.map((p, i) => `${String.fromCharCode(97 + i)}) ${p}`).join('; ') : (parts[0] ?? '(respuesta abierta)');
+    }
+
+    return { questionText, isCorrect, studentAnswer, correctAnswer };
+  });
+
+  return {
+    attempt: { id: attempt.id, score: attempt.score, passed: attempt.passed, finished_at: attempt.finished_at },
     answers: detailAnswers,
   };
 }

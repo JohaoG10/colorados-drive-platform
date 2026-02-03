@@ -34,6 +34,8 @@ export default function ReportesPorCursoPage() {
     answers: { questionText: string; isCorrect: boolean; studentAnswer: string; correctAnswer: string }[];
   } | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [deleteWithUsersModal, setDeleteWithUsersModal] = useState<Cohort | null>(null);
+  const [deleteWithUsersLoading, setDeleteWithUsersLoading] = useState(false);
 
   const load = () => {
     if (!token) return;
@@ -89,19 +91,24 @@ export default function ReportesPorCursoPage() {
     return h > 0 ? `${h}h ${m}m` : `${m} min`;
   };
 
-  const deleteCohort = async (e: React.MouseEvent, c: Cohort) => {
-    e.stopPropagation();
-    if (!confirm(`¿Eliminar "Curso ${c.courses?.name || ''} Nro ${c.name}"? Los estudiantes de este curso quedarán sin asignar.`)) return;
-    if (!token) return;
+  const deleteCohortWithUsers = async () => {
+    const c = deleteWithUsersModal;
+    if (!c || !token) return;
+    setDeleteWithUsersLoading(true);
+    setReportError('');
     try {
-      const res = await fetch(`${API_URL}/api/admin/cohorts/${c.id}`, { method: 'DELETE', headers: getAuthHeaders(token) });
-      if (res.status === 401) { triggerSessionExpired(); return; }
-      if (!res.ok) throw new Error('Error');
+      const res = await fetch(`${API_URL}/api/admin/cohorts/${c.id}?deleteUsers=true`, { method: 'DELETE', headers: getAuthHeaders(token) });
+      if (res.status === 401) { triggerSessionExpired(); setDeleteWithUsersModal(null); return; }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Error');
       if (selectedCohort?.id === c.id) setSelectedCohort(null);
       setReport(null);
+      setDeleteWithUsersModal(null);
       load();
-    } catch {
-      setReportError('Error al eliminar');
+    } catch (err) {
+      setReportError(err instanceof Error ? err.message : 'Error al eliminar');
+    } finally {
+      setDeleteWithUsersLoading(false);
     }
   };
 
@@ -122,7 +129,7 @@ export default function ReportesPorCursoPage() {
 
   const downloadExcel = () => {
     if (!report) return;
-    const courseLabel = `Curso ${report.cohort?.courseName || ''} Nro ${report.cohort?.name || ''}`;
+    const courseLabel = `${report.cohort?.courseName || 'Curso'} Nro ${report.cohort?.name || ''}`;
     const headers = ['Estudiante', 'Email', 'Tiempo en plataforma', 'Exámenes (detalle)'];
     const rows = (report.students || []).map((s) => {
       const timeStr = formatTime(s.totalTimeSeconds ?? 0);
@@ -145,30 +152,32 @@ export default function ReportesPorCursoPage() {
   const searchLower = searchQuery.trim().toLowerCase();
   const filteredCohorts = searchLower
     ? cohorts.filter((c) => {
-        const label = `Curso ${c.courses?.name || ''} Nro ${c.name} ${c.code}`.toLowerCase();
+        const label = `${c.courses?.name || 'Curso'} Nro ${c.name} ${c.code}`.toLowerCase();
         return label.includes(searchLower);
       })
     : cohorts;
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-lg font-semibold text-neutral-900">Reportes por curso</h2>
-        <p className="text-sm text-neutral-500 mt-0.5">
-          Selecciona un curso para ver el reporte de estudiantes y sus exámenes. Crea cursos en <strong>Cursos y materias</strong>.
-        </p>
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-800 to-neutral-900 p-6 text-white shadow-xl">
+        <div className="relative z-10">
+          <h2 className="text-xl font-bold mb-1">Reportes por curso</h2>
+          <p className="text-neutral-400 text-sm">
+            Selecciona un curso para ver el reporte de estudiantes y sus exámenes. Crea cursos en Cursos y materias.
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border overflow-hidden">
-          <div className="px-6 py-4 border-b">
-            <h3 className="font-semibold mb-3">Buscar curso</h3>
+        <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden shadow-sm">
+          <div className="px-6 py-4 border-b border-neutral-100 bg-neutral-50/50">
+            <h3 className="font-semibold text-neutral-900 mb-3">Buscar curso</h3>
             <input
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Ej: Tipo B, 200, Mecánica..."
-              className="w-full px-4 py-2.5 rounded-lg border border-neutral-300 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+              className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none"
             />
           </div>
           {loading ? (
@@ -186,17 +195,17 @@ export default function ReportesPorCursoPage() {
               {filteredCohorts.map((c) => (
                 <li
                   key={c.id}
-                  className={`px-6 py-4 flex justify-between items-center cursor-pointer hover:bg-neutral-50 ${selectedCohort?.id === c.id ? 'bg-red-50' : ''}`}
+                  className={`px-6 py-4 flex justify-between items-center gap-3 cursor-pointer hover:bg-neutral-50 ${selectedCohort?.id === c.id ? 'bg-red-50' : ''}`}
                   onClick={() => setSelectedCohort(selectedCohort?.id === c.id ? null : c)}
                 >
-                  <p className="font-medium">Curso {c.courses?.name || ''} Nro {c.name}</p>
+                  <p className="font-medium min-w-0">{c.courses?.name || 'Curso'} Nro {c.name}</p>
                   <button
                     type="button"
-                    onClick={(e) => deleteCohort(e, c)}
-                    className="text-red-600 hover:underline text-sm shrink-0 ml-2"
-                    title="Eliminar este curso"
+                    onClick={(e) => { e.stopPropagation(); setDeleteWithUsersModal(c); }}
+                    className="shrink-0 px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors"
+                    title="Eliminar este curso y todos sus usuarios (descarga el CSV antes)"
                   >
-                    Eliminar
+                    Eliminar curso y usuarios
                   </button>
                 </li>
               ))}
@@ -209,8 +218,8 @@ export default function ReportesPorCursoPage() {
           )}
         </div>
 
-        <div className="bg-white rounded-xl border overflow-hidden">
-          <h3 className="px-6 py-4 font-semibold border-b">Reporte del curso</h3>
+        <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden shadow-sm">
+          <h3 className="px-6 py-4 font-semibold text-neutral-900 border-b border-neutral-100 bg-neutral-50/50">Reporte del curso</h3>
           {!selectedCohort ? (
             <div className="p-8 text-center text-neutral-500">Selecciona un curso</div>
           ) : reportLoading ? (
@@ -219,12 +228,12 @@ export default function ReportesPorCursoPage() {
             <div className="p-6 text-red-600">{reportError}</div>
           ) : report ? (
             <div className="p-6 overflow-auto max-h-[500px]">
-              <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
-                <p className="font-medium text-neutral-900">Curso {report.cohort?.courseName || ''} Nro {report.cohort?.name || ''}</p>
+              <div className="flex flex-wrap items-center gap-2 mb-4">
+                <p className="font-medium text-neutral-900">{report.cohort?.courseName || 'Curso'} Nro {report.cohort?.name || ''}</p>
                 <button
                   type="button"
                   onClick={downloadExcel}
-                  className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700"
+                  className="px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 shadow-md transition-all"
                 >
                   Descargar Excel (CSV)
                 </button>
@@ -274,10 +283,41 @@ export default function ReportesPorCursoPage() {
         </div>
       </div>
 
+      {deleteWithUsersModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !deleteWithUsersLoading && setDeleteWithUsersModal(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-semibold text-neutral-900 mb-2">Eliminar curso y todos los usuarios</h3>
+            <p className="text-neutral-600 text-sm mb-4">
+              Se eliminará <strong>{deleteWithUsersModal.courses?.name || 'Curso'} Nro {deleteWithUsersModal.name}</strong> y todos los usuarios asignados
+              {selectedCohort?.id === deleteWithUsersModal.id && report?.students != null ? ` (${report.students.length} estudiantes).` : '.'}
+              {' '}Sus datos (exámenes, intentos, actividad) se borrarán. Asegúrate de haber descargado el reporte CSV. Esta acción no se puede deshacer.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setDeleteWithUsersModal(null)}
+                disabled={deleteWithUsersLoading}
+                className="px-4 py-2 rounded-xl border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={deleteCohortWithUsers}
+                disabled={deleteWithUsersLoading}
+                className="px-4 py-2 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleteWithUsersLoading ? 'Eliminando...' : 'Sí, eliminar todo'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {detailAttemptId && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setDetailAttemptId(null)}>
-          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b flex justify-between items-center">
+          <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-neutral-100 flex justify-between items-center bg-neutral-50/50">
               <h3 className="font-semibold text-neutral-900">Respuestas del examen</h3>
               <button type="button" onClick={() => setDetailAttemptId(null)} className="text-neutral-500 hover:text-neutral-700 p-1">✕</button>
             </div>

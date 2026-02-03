@@ -33,24 +33,47 @@ export default function StudentExamsPage() {
 
   return (
     <div className="space-y-8">
-      <h2 className="text-lg font-semibold text-neutral-900">Exámenes</h2>
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 text-white shadow-xl shadow-red-600/20">
+        <div className="absolute inset-0 opacity-10">
+          <div
+            className="absolute inset-0"
+            style={{
+              backgroundImage: `repeating-linear-gradient(90deg, transparent, transparent 40px, rgba(255,255,255,0.1) 40px, rgba(255,255,255,0.1) 41px)`,
+            }}
+          />
+        </div>
+        <div className="relative z-10">
+          <p className="text-red-100 text-sm font-medium mb-1">Evaluación</p>
+          <h1 className="text-xl sm:text-2xl font-bold mb-2">Exámenes</h1>
+          <p className="text-red-100 text-sm max-w-md">
+            Rendir exámenes disponibles y revisar tus resultados.
+          </p>
+        </div>
+      </div>
 
       {available.length > 0 && (
         <div>
-          <h3 className="text-sm font-medium text-neutral-500 mb-3">Disponibles</h3>
+          <h3 className="text-sm font-semibold text-neutral-700 mb-4">Disponibles para rendir</h3>
           <div className="grid gap-4">
             {available.map((ex) => (
               <Link
                 key={ex.id}
                 href={`/student/exams/${ex.id}`}
-                className="block p-6 bg-white rounded-xl border border-neutral-200 hover:border-red-600 hover:shadow-md transition-all"
+                className="group block p-6 bg-white rounded-2xl border border-neutral-200 hover:border-red-500/50 hover:shadow-lg transition-all duration-200"
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-semibold text-neutral-900">{ex.title}</h4>
-                    <p className="text-sm text-neutral-500 mt-1">{ex.question_count} preguntas</p>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-red-50 group-hover:bg-red-100 flex items-center justify-center shrink-0 transition-colors">
+                      <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-neutral-900 group-hover:text-red-600 transition-colors">{ex.title}</h4>
+                      <p className="text-sm text-neutral-500 mt-0.5">{ex.question_count} preguntas</p>
+                    </div>
                   </div>
-                  <span className="px-3 py-1 rounded-full text-sm font-medium bg-red-100 text-red-800">
+                  <span className="px-4 py-2 rounded-xl text-sm font-medium bg-red-100 text-red-800 group-hover:bg-red-200 transition-colors shrink-0">
                     Rendir examen
                   </span>
                 </div>
@@ -62,20 +85,31 @@ export default function StudentExamsPage() {
 
       {completed.length > 0 && (
         <div>
-          <h3 className="text-sm font-medium text-neutral-500 mb-3">Completados</h3>
+          <h3 className="text-sm font-semibold text-neutral-700 mb-4">Completados</h3>
           <div className="grid gap-4">
             {completed.map((ex) => (
               <Link
                 key={ex.id}
                 href={`/student/exams/${ex.id}/result`}
-                className="block p-6 bg-white rounded-xl border border-neutral-200 hover:border-neutral-300 transition-all"
+                className="group block p-6 bg-white rounded-2xl border border-neutral-200 hover:border-neutral-300 hover:shadow-md transition-all duration-200"
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-semibold text-neutral-900">{ex.title}</h4>
-                    <p className="text-sm text-neutral-500 mt-1">Examen completado</p>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-neutral-100 group-hover:bg-neutral-200 flex items-center justify-center shrink-0 transition-colors">
+                      <svg className="w-6 h-6 text-neutral-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h4 className="font-semibold text-neutral-900">{ex.title}</h4>
+                      <p className="text-sm text-neutral-500 mt-0.5">Ver resultado y respuestas</p>
+                    </div>
                   </div>
-                  <span className="px-3 py-1 rounded-full text-sm font-medium bg-neutral-100 text-neutral-700">
+                  <span className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-neutral-100 text-neutral-700 group-hover:bg-neutral-200 transition-colors shrink-0">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
                     Ver resultado
                   </span>
                 </div>
@@ -86,8 +120,14 @@ export default function StudentExamsPage() {
       )}
 
       {exams.length === 0 && (
-        <div className="bg-white rounded-xl border p-8 text-center text-neutral-500">
-          No hay exámenes disponibles.
+        <div className="bg-white rounded-2xl border border-neutral-200 p-12 text-center shadow-sm">
+          <div className="w-16 h-16 rounded-full bg-neutral-100 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-neutral-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+          </div>
+          <p className="text-neutral-600 font-medium">No hay exámenes disponibles</p>
+          <p className="text-sm text-neutral-500 mt-1">Tu curso aún no tiene exámenes publicados.</p>
         </div>
       )}
     </div>
