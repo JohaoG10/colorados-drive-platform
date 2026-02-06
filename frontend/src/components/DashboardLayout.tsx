@@ -15,21 +15,25 @@ export function DashboardLayout({
   children,
   navItems,
   title,
+  headerRight,
 }: {
   children: React.ReactNode;
   navItems: NavItem[];
   title: string;
+  headerRight?: React.ReactNode;
 }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
 
   const pageTitles: [string, string][] = [
+    ['/admin/notifications', 'Avisos'],
     ['/admin/exams', 'Exámenes'],
     ['/admin/promotions', 'Reportes por curso'],
     ['/admin/courses', 'Cursos y materias'],
     ['/admin/users', 'Usuarios'],
     ['/admin', 'Dashboard'],
     ['/student/progress', 'Progreso'],
+    ['/student/notifications', 'Avisos'],
     ['/student/exams', 'Exámenes'],
     ['/student/subjects', 'Materias'],
     ['/student', 'Mi curso'],
@@ -76,8 +80,9 @@ export function DashboardLayout({
       </aside>
 
       <main className="flex-1 flex flex-col overflow-auto">
-        <header className="bg-white border-b border-neutral-200 px-8 py-5 shadow-sm">
+        <header className="bg-white border-b border-neutral-200 px-8 py-5 shadow-sm flex items-center justify-between gap-4">
           <h1 className="text-xl font-semibold text-neutral-900">{currentTitle}</h1>
+          {headerRight}
         </header>
         <div className="flex-1 p-8">{children}</div>
       </main>

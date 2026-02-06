@@ -47,6 +47,7 @@ export async function authMiddleware(
     const courseId = profile.course_id
       ?? (profile.cohorts as { course_id?: string } | null)?.course_id
       ?? null;
+    const cohortId = profile.cohort_id ?? null;
 
     req.user = {
       id: profile.id,
@@ -54,6 +55,7 @@ export async function authMiddleware(
       fullName: profile.full_name || '',
       role: profile.role as AuthUser['role'],
       courseId,
+      cohortId,
     };
     next();
   } catch {

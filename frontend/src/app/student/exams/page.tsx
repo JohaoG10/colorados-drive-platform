@@ -14,6 +14,10 @@ interface ExamItem {
   attempted?: boolean;
   completed?: boolean;
   attemptId?: string;
+  bestScore?: number;
+  attemptsUsed?: number;
+  maxAttempts?: number;
+  canRetry?: boolean;
 }
 
 export default function StudentExamsPage() {
@@ -28,8 +32,9 @@ export default function StudentExamsPage() {
       .catch(() => setExams([]));
   }, [token]);
 
-  const available = exams.filter((e) => !e.completed);
-  const completed = exams.filter((e) => e.completed);
+  const canTakeMore = (e: ExamItem) => !e.completed || (e.canRetry === true);
+  const available = exams.filter((e) => canTakeMore(e));
+  const completed = exams.filter((e) => e.completed && !e.canRetry);
 
   return (
     <div className="space-y-8">
@@ -70,11 +75,19 @@ export default function StudentExamsPage() {
                     </div>
                     <div>
                       <h4 className="font-semibold text-neutral-900 group-hover:text-red-600 transition-colors">{ex.title}</h4>
-                      <p className="text-sm text-neutral-500 mt-0.5">{ex.question_count} preguntas</p>
+                      <p className="text-sm text-neutral-500 mt-0.5">
+                        {ex.question_count} preguntas
+                        {ex.attemptsUsed != null && ex.maxAttempts != null && (
+                          <span className="ml-2">· Intento {ex.attemptsUsed + 1} de {ex.maxAttempts}</span>
+                        )}
+                      </p>
+                      {ex.bestScore != null && ex.attemptsUsed != null && ex.attemptsUsed > 0 && (
+                        <p className="text-xs text-neutral-500 mt-0.5">Mejor nota: {ex.bestScore.toFixed(0)}%</p>
+                      )}
                     </div>
                   </div>
                   <span className="px-4 py-2 rounded-xl text-sm font-medium bg-red-100 text-red-800 group-hover:bg-red-200 transition-colors shrink-0">
-                    Rendir examen
+                    {ex.attempted ? 'Rendir de nuevo' : 'Rendir examen'}
                   </span>
                 </div>
               </Link>
@@ -102,7 +115,9 @@ export default function StudentExamsPage() {
                     </div>
                     <div>
                       <h4 className="font-semibold text-neutral-900">{ex.title}</h4>
-                      <p className="text-sm text-neutral-500 mt-0.5">Ver resultado y respuestas</p>
+                      <p className="text-sm text-neutral-500 mt-0.5">
+                        Mejor nota: {ex.bestScore != null ? `${ex.bestScore.toFixed(0)}%` : '—'} · Ver resultado
+                      </p>
                     </div>
                   </div>
                   <span className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-neutral-100 text-neutral-700 group-hover:bg-neutral-200 transition-colors shrink-0">

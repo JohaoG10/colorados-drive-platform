@@ -6,6 +6,7 @@ import { uploadSingle } from '../middleware/upload';
 import { createUser, deleteUser, updateUserProfile } from '../services/authService';
 import * as adminService from '../services/adminService';
 import * as examService from '../services/examService';
+import * as notificationService from '../services/notificationService';
 import { uploadFile } from '../services/uploadService';
 import { AuthenticatedRequest } from '../types';
 
@@ -382,6 +383,8 @@ router.post(
     body('description').optional().isString(),
     body('questionCount').isInt({ min: 1 }),
     body('passingScore').optional().isFloat({ min: 0, max: 100 }),
+    body('durationMinutes').optional().isInt({ min: 1 }).toInt(),
+    body('maxAttempts').optional().isInt({ min: 1 }).toInt(),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);
@@ -402,6 +405,8 @@ router.post(
         description: req.body.description,
         questionCount: req.body.questionCount,
         passingScore: req.body.passingScore,
+        durationMinutes: req.body.durationMinutes ?? null,
+        maxAttempts: req.body.maxAttempts ?? 1,
       });
       res.status(201).json(exam);
     } catch (e) {
@@ -493,7 +498,7 @@ router.get('/exams', async (req: AuthenticatedRequest, res: Response) => {
     const { supabaseAdmin } = await import('../config/supabase');
     const { data, error } = await supabaseAdmin
       .from('exams')
-      .select('id, title, subject_id, course_id, question_count, passing_score, created_at')
+      .select('id, title, subject_id, course_id, question_count, passing_score, duration_minutes, max_attempts, created_at')
       .order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     let exams = data || [];
@@ -569,6 +574,48 @@ router.get('/users/:id/exam-results', [param('id').isUUID()], async (req: Authen
   try {
     const results = await examService.getUserExamResults(req.params.id);
     res.json(results);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+// --- Notifications (avisos por curso) ---
+router.post(
+  '/notifications',
+  [
+    body('cohortId').isUUID(),
+    body('title').trim().notEmpty().isLength({ max: 300 }),
+    body('body').trim().notEmpty(),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    if (!req.user?.id) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+    try {
+      const notification = await notificationService.createNotification({
+        cohortId: req.body.cohortId,
+        title: req.body.title,
+        body: req.body.body,
+        createdBy: req.user.id,
+      });
+      res.status(201).json(notification);
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.get('/notifications', async (req: AuthenticatedRequest, res: Response) => {
+  const cohortId = req.query.cohortId as string | undefined;
+  try {
+    const list = await notificationService.listNotificationsForAdmin(cohortId);
+    res.json(list);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }

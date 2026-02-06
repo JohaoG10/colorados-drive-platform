@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS exams (
   description TEXT,
   question_count INT NOT NULL DEFAULT 10,
   passing_score DECIMAL(5,2) DEFAULT 70.00,
+  duration_minutes INT,
+  max_attempts INT NOT NULL DEFAULT 1,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT exam_scope CHECK (
@@ -105,7 +107,7 @@ CREATE TABLE IF NOT EXISTS options (
   order_index INT DEFAULT 0
 );
 
--- Exam attempts (1 per user per exam)
+-- Exam attempts (múltiples por usuario y examen; reportes usan el mejor intento)
 CREATE TABLE IF NOT EXISTS exam_attempts (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   exam_id UUID NOT NULL REFERENCES exams(id) ON DELETE CASCADE,
@@ -113,8 +115,7 @@ CREATE TABLE IF NOT EXISTS exam_attempts (
   score DECIMAL(5,2),
   passed BOOLEAN,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  finished_at TIMESTAMPTZ,
-  UNIQUE(exam_id, user_id)
+  finished_at TIMESTAMPTZ
 );
 
 -- Attempt answers (option_id for multiple_choice, text_answer for open_text)
@@ -156,6 +157,30 @@ CREATE INDEX idx_questions_exam ON questions(exam_id);
 CREATE INDEX idx_options_question ON options(question_id);
 CREATE INDEX idx_exam_attempts_user ON exam_attempts(user_id);
 CREATE INDEX idx_exam_attempts_exam ON exam_attempts(exam_id);
+CREATE INDEX idx_exam_attempts_exam_user ON exam_attempts(exam_id, user_id);
 CREATE INDEX idx_user_profiles_course ON user_profiles(course_id);
 CREATE INDEX idx_cohorts_course ON cohorts(course_id);
 CREATE INDEX idx_user_profiles_cohort ON user_profiles(cohort_id);
+
+-- Notifications (avisos por cohorte)
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  cohort_id UUID NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
+  title VARCHAR(300) NOT NULL,
+  body TEXT NOT NULL,
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS notification_reads (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  notification_id UUID NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(notification_id, user_id)
+);
+
+CREATE INDEX idx_notifications_cohort ON notifications(cohort_id);
+CREATE INDEX idx_notifications_created_at ON notifications(created_at DESC);
+CREATE INDEX idx_notification_reads_user ON notification_reads(user_id);
+CREATE INDEX idx_notification_reads_notification ON notification_reads(notification_id);

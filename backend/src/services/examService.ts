@@ -7,6 +7,10 @@ export interface CreateExamParams {
   description?: string;
   questionCount: number;
   passingScore?: number;
+  /** Tiempo límite en minutos; null = sin límite */
+  durationMinutes?: number | null;
+  /** Número máximo de intentos por usuario (default 1) */
+  maxAttempts?: number;
 }
 
 export type QuestionType = 'multiple_choice' | 'open_text';
@@ -35,6 +39,8 @@ export async function createExam(params: CreateExamParams) {
       description: params.description || null,
       question_count: params.questionCount,
       passing_score: params.passingScore ?? 70,
+      duration_minutes: params.durationMinutes ?? null,
+      max_attempts: params.maxAttempts ?? 1,
     })
     .select()
     .single();
@@ -169,7 +175,7 @@ export async function getExamWithQuestions(examId: string) {
 export async function getExamForStudent(examId: string) {
   const { data: exam, error: examErr } = await supabaseAdmin
     .from('exams')
-    .select('id, title, question_count, subject_id, course_id')
+    .select('id, title, question_count, subject_id, course_id, duration_minutes')
     .eq('id', examId)
     .single();
   if (examErr || !exam) throw new Error('Exam not found');
@@ -211,29 +217,44 @@ export async function getExamForStudent(examId: string) {
     };
   });
 
-  return { id: exam.id, title: exam.title, questions };
+  return {
+    id: exam.id,
+    title: exam.title,
+    questions,
+    durationMinutes: exam.duration_minutes ?? undefined,
+  };
 }
 
-export async function hasAttempt(examId: string, userId: string): Promise<boolean> {
-  const { data, error } = await supabaseAdmin
+/** Cuenta cuántos intentos finalizados tiene el usuario en este examen */
+export async function countFinishedAttempts(examId: string, userId: string): Promise<number> {
+  const { count, error } = await supabaseAdmin
     .from('exam_attempts')
-    .select('id')
+    .select('id', { count: 'exact', head: true })
     .eq('exam_id', examId)
     .eq('user_id', userId)
-    .maybeSingle();
-  return !error && !!data;
+    .not('finished_at', 'is', null);
+  if (error) throw new Error(error.message);
+  return count ?? 0;
 }
 
-/** Obtiene el intento existente (si existe) para un usuario y examen */
-export async function getExistingAttempt(examId: string, userId: string): Promise<{ id: string; finished_at: string | null } | null> {
+/** Devuelve el intento sin finalizar (en curso) si existe */
+export async function getUnfinishedAttempt(examId: string, userId: string): Promise<{ id: string; finished_at: string | null } | null> {
   const { data, error } = await supabaseAdmin
     .from('exam_attempts')
     .select('id, finished_at')
     .eq('exam_id', examId)
     .eq('user_id', userId)
+    .is('finished_at', null)
+    .order('started_at', { ascending: false })
+    .limit(1)
     .maybeSingle();
   if (error || !data) return null;
   return data;
+}
+
+/** Obtiene el intento existente: si hay uno sin finalizar lo devuelve; si no, null (el router decidirá si puede crear otro) */
+export async function getExistingAttempt(examId: string, userId: string): Promise<{ id: string; finished_at: string | null } | null> {
+  return getUnfinishedAttempt(examId, userId);
 }
 
 export async function createAttempt(examId: string, userId: string) {
@@ -242,15 +263,7 @@ export async function createAttempt(examId: string, userId: string) {
     .insert({ exam_id: examId, user_id: userId })
     .select()
     .single();
-
-  if (error) {
-    const isDuplicate = error.code === '23505' || /duplicate key|unique constraint.*exam_attempts_exam_id_user_id/i.test(error.message);
-    if (isDuplicate) {
-      const existing = await getExistingAttempt(examId, userId);
-      if (existing) return { id: existing.id, exam_id: examId, user_id: userId, started_at: new Date().toISOString(), finished_at: existing.finished_at, score: null, passed: null };
-    }
-    throw new Error(error.message);
-  }
+  if (error) throw new Error(error.message);
   return data;
 }
 
@@ -394,7 +407,7 @@ export async function getAttemptResult(attemptId: string, userId: string) {
 export async function listExamsForCourse(courseId: string) {
   const { data: bySubject } = await supabaseAdmin
     .from('exams')
-    .select('id, title, subject_id, course_id, question_count, passing_score')
+    .select('id, title, subject_id, course_id, question_count, passing_score, duration_minutes, max_attempts')
     .is('course_id', null);
 
   const subjectIds = [...new Set((bySubject || []).map((e) => e.subject_id).filter(Boolean))];
@@ -409,53 +422,86 @@ export async function listExamsForCourse(courseId: string) {
 
   const { data: examsByCourse } = await supabaseAdmin
     .from('exams')
-    .select('id, title, subject_id, course_id, question_count, passing_score')
+    .select('id, title, subject_id, course_id, question_count, passing_score, duration_minutes, max_attempts')
     .eq('course_id', courseId);
 
   const all = [...(examsByCourse || []), ...examsBySubject];
   return all;
 }
 
+/** Resultados del examen: un registro por usuario con su mejor intento (mayor calificación) */
 export async function getAdminExamResults(examId: string) {
   const { data: attempts, error } = await supabaseAdmin
     .from('exam_attempts')
     .select('id, user_id, score, passed, started_at, finished_at')
     .eq('exam_id', examId)
-    .not('finished_at', 'is', null)
-    .order('finished_at', { ascending: false });
+    .not('finished_at', 'is', null);
 
   if (error) throw new Error(error.message);
   if (!attempts?.length) return [];
 
-  const userIds = [...new Set(attempts.map((a) => a.user_id))];
+  const byUser = new Map<string, { id: string; user_id: string; score: number; passed: boolean; started_at: string; finished_at: string }>();
+  for (const a of attempts) {
+    const score = a.score ?? 0;
+    const existing = byUser.get(a.user_id);
+    if (!existing || (existing.score ?? 0) < score) {
+      byUser.set(a.user_id, { id: a.id, user_id: a.user_id, score, passed: a.passed ?? false, started_at: a.started_at, finished_at: a.finished_at ?? '' });
+    }
+  }
+
+  const userIds = [...byUser.keys()];
   const { data: profiles } = await supabaseAdmin
     .from('user_profiles')
     .select('id, email, full_name')
     .in('id', userIds);
 
   const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
-  return attempts.map((a) => ({
+  return [...byUser.values()].map((a) => ({
     ...a,
     email: profileMap.get(a.user_id)?.email,
     fullName: profileMap.get(a.user_id)?.full_name,
   }));
 }
 
+/** Resultados del usuario: un registro por examen con su mejor intento */
 export async function getUserExamResults(userId: string) {
   const { data: attempts, error } = await supabaseAdmin
     .from('exam_attempts')
     .select('id, exam_id, score, passed, started_at, finished_at')
     .eq('user_id', userId)
-    .not('finished_at', 'is', null)
-    .order('finished_at', { ascending: false });
+    .not('finished_at', 'is', null);
 
   if (error) throw new Error(error.message);
   if (!attempts?.length) return [];
 
-  const examIds = [...new Set(attempts.map((a) => a.exam_id))];
+  const byExam = new Map<string, { id: string; exam_id: string; score: number; passed: boolean; started_at: string; finished_at: string }>();
+  for (const a of attempts) {
+    const score = a.score ?? 0;
+    const existing = byExam.get(a.exam_id);
+    if (!existing || (existing.score ?? 0) < score) {
+      byExam.set(a.exam_id, { id: a.id, exam_id: a.exam_id, score, passed: a.passed ?? false, started_at: a.started_at, finished_at: a.finished_at ?? '' });
+    }
+  }
+
+  const examIds = [...byExam.keys()];
   const { data: exams } = await supabaseAdmin.from('exams').select('id, title').in('id', examIds);
   const examMap = new Map((exams || []).map((e) => [e.id, e]));
-  return attempts.map((a) => ({ ...a, examTitle: examMap.get(a.exam_id)?.title }));
+  return [...byExam.values()].map((a) => ({ ...a, examTitle: examMap.get(a.exam_id)?.title }));
+}
+
+/** Id del intento con mejor calificación para este usuario en este examen (para mostrar resultado) */
+export async function getBestAttemptIdForUserExam(examId: string, userId: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from('exam_attempts')
+    .select('id, score')
+    .eq('exam_id', examId)
+    .eq('user_id', userId)
+    .not('finished_at', 'is', null)
+    .order('score', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data.id;
 }
 
 export interface AttemptDetailAnswer {

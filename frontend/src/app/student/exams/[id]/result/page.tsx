@@ -96,6 +96,7 @@ export default function ExamResultPage() {
         <p className="text-sm text-neutral-500 mt-4">
           Realizado el {result.finishedAt ? new Date(result.finishedAt).toLocaleString() : '-'}
         </p>
+        <p className="text-xs text-neutral-400 mt-2">Se muestra tu mejor calificación de todos los intentos.</p>
       </div>
 
       <div className="mt-6 flex flex-wrap gap-3 justify-center">

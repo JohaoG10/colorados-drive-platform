@@ -41,17 +41,33 @@ export async function getCohortReport(cohortId: string) {
       .eq('user_id', s.id)
       .not('finished_at', 'is', null);
 
+    const byExam = new Map<string, { id: string; exam_id: string; score: number; passed: boolean; finished_at: string; examTitle: string }>();
+    for (const a of attempts || []) {
+      const score = a.score ?? 0;
+      const existing = byExam.get(a.exam_id);
+      if (!existing || existing.score < score) {
+        byExam.set(a.exam_id, {
+          id: a.id,
+          exam_id: a.exam_id,
+          score,
+          passed: a.passed ?? false,
+          finished_at: a.finished_at || '',
+          examTitle: (a.exams as { title?: string })?.title || 'Examen',
+        });
+      }
+    }
+
     report.push({
       userId: s.id,
       email: s.email,
       fullName: s.full_name || '',
-      examResults: (attempts || []).map((a) => ({
+      examResults: [...byExam.values()].map((a) => ({
         examId: a.exam_id,
         attemptId: a.id,
-        examTitle: (a.exams as { title?: string })?.title || 'Examen',
-        score: a.score ?? 0,
-        passed: a.passed ?? false,
-        finishedAt: a.finished_at || '',
+        examTitle: a.examTitle,
+        score: a.score,
+        passed: a.passed,
+        finishedAt: a.finished_at,
       })),
       totalTimeSeconds: activity?.total_time_seconds ?? 0,
       lastActiveAt: activity?.last_active_at ?? null,

@@ -7,6 +7,7 @@ export interface AuthUser {
   email: string;
   role: UserRole;
   courseId: string | null;
+  cohortId: string | null;
   fullName: string;
 }
 

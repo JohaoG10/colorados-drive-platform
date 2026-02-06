@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAuthHeaders } from '@/lib/api';
@@ -17,17 +17,26 @@ interface Question {
   options: { id: string; text: string }[];
 }
 
+function formatTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 export default function TakeExamPage() {
   const params = useParams();
   const router = useRouter();
   const { token } = useAuth();
   const examId = params.id as string;
-  const [exam, setExam] = useState<{ id: string; title: string; questions: Question[] } | null>(null);
+  const [exam, setExam] = useState<{ id: string; title: string; questions: Question[]; durationMinutes?: number } | null>(null);
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const timerStartedAt = useRef<number | null>(null);
+  const autoSubmitted = useRef(false);
 
   useEffect(() => {
     if (!token || !examId) return;
@@ -40,6 +49,11 @@ export default function TakeExamPage() {
       .then((r) => r.json())
       .then((data) => {
         if (data.error) {
+          if (data.error === 'no_more_attempts' || (data.message && String(data.message).toLowerCase().includes('intentos'))) {
+            setError('Ya usaste todos los intentos permitidos para este examen. Revisa tu resultado en la lista.');
+            setLoading(false);
+            return;
+          }
           const err = String(data.error).toLowerCase();
           if (err.includes('already attempted') || err.includes('duplicate') || err.includes('unique constraint')) {
             router.replace(`/student/exams/${examId}/result`);
@@ -50,7 +64,13 @@ export default function TakeExamPage() {
           return;
         }
         setAttemptId(data.attemptId);
-        setExam({ id: data.id, title: data.title, questions: data.questions || [] });
+        const durationMin = data.durationMinutes != null ? Number(data.durationMinutes) : undefined;
+        setExam({ id: data.id, title: data.title, questions: data.questions || [], durationMinutes: durationMin });
+        if (durationMin != null && durationMin > 0) {
+          const totalSeconds = durationMin * 60;
+          setSecondsLeft(totalSeconds);
+          timerStartedAt.current = Date.now();
+        }
         setLoading(false);
       })
       .catch(() => {
@@ -59,7 +79,12 @@ export default function TakeExamPage() {
       });
   }, [token, examId, router]);
 
-  const doSubmit = async (answerList: { questionId: string; optionId?: string; textAnswer?: string; textAnswers?: string[] }[]) => {
+  const answersRef = useRef(answers);
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+
+  const doSubmit = useCallback(async (answerList: { questionId: string; optionId?: string; textAnswer?: string; textAnswers?: string[] }[]) => {
     if (!token || !attemptId) return;
     setSubmitting(true);
     setError('');
@@ -77,7 +102,34 @@ export default function TakeExamPage() {
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [token, attemptId, router, examId]);
+
+  useEffect(() => {
+    if (!exam?.durationMinutes || !attemptId || submitting) return;
+    const totalSeconds = exam.durationMinutes * 60;
+    const interval = setInterval(() => {
+      if (timerStartedAt.current == null) return;
+      const elapsed = Math.floor((Date.now() - timerStartedAt.current) / 1000);
+      const left = Math.max(0, totalSeconds - elapsed);
+      setSecondsLeft(left);
+      if (left <= 0 && !autoSubmitted.current) {
+        autoSubmitted.current = true;
+        const a = answersRef.current;
+        const list = exam.questions.map((q) => {
+          const isOpen = q.type === 'open_text';
+          const parts = q.openTextParts ?? 1;
+          if (isOpen && parts > 1) {
+            const textAnswers = Array.from({ length: parts }, (_, i) => (a[`${q.id}_${i}`] ?? '').trim());
+            return { questionId: q.id, textAnswers };
+          }
+          if (isOpen) return { questionId: q.id, textAnswer: (a[q.id] ?? '').trim() };
+          return { questionId: q.id, optionId: a[q.id] ?? '' };
+        });
+        doSubmit(list);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [exam, attemptId, submitting, doSubmit]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,8 +194,20 @@ export default function TakeExamPage() {
         <Link href="/student/exams" className="text-neutral-500 hover:text-neutral-700 text-sm flex items-center gap-1">
           ← Volver a exámenes
         </Link>
-        <h1 className="text-xl font-semibold text-neutral-900 mt-2">{exam.title}</h1>
-        <p className="text-neutral-500 text-sm">{exam.questions.length} preguntas</p>
+        <div className="flex flex-wrap items-center justify-between gap-4 mt-2">
+          <div>
+            <h1 className="text-xl font-semibold text-neutral-900">{exam.title}</h1>
+            <p className="text-neutral-500 text-sm">{exam.questions.length} preguntas</p>
+          </div>
+          {secondsLeft != null && (
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl font-mono text-lg font-semibold ${secondsLeft <= 60 ? 'bg-red-100 text-red-700' : 'bg-neutral-100 text-neutral-800'}`}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              {formatTime(secondsLeft)}
+            </div>
+          )}
+        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">

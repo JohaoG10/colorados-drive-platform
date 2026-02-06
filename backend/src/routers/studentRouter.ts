@@ -4,6 +4,7 @@ import { authMiddleware } from '../middleware/auth';
 import { requireStudent } from '../middleware/rbac';
 import * as studentService from '../services/studentService';
 import * as examService from '../services/examService';
+import * as notificationService from '../services/notificationService';
 import { supabaseAdmin } from '../config/supabase';
 import { AuthenticatedRequest } from '../types';
 
@@ -94,21 +95,42 @@ router.get('/exams', async (req: AuthenticatedRequest, res: Response) => {
   }
   try {
     const exams = await examService.listExamsForCourse(req.user.courseId);
-    const attemptMap = new Map<string, { id: string; finished: boolean }>();
+    const examIds = exams.map((e) => e.id);
     const { data: attempts } = await supabaseAdmin
       .from('exam_attempts')
-      .select('exam_id, id, finished_at')
-      .eq('user_id', req.user.id);
-    (attempts || []).forEach((a) => {
-      attemptMap.set(a.exam_id, { id: a.id, finished: !!a.finished_at });
-    });
+      .select('exam_id, id, score, finished_at')
+      .eq('user_id', req.user.id)
+      .in('exam_id', examIds);
+
+    const byExam = new Map<string, { bestAttemptId: string; bestScore: number; finishedCount: number }>();
+    for (const a of attempts || []) {
+      const cur = byExam.get(a.exam_id) || { bestAttemptId: a.id, bestScore: a.score ?? 0, finishedCount: 0 };
+      if (a.finished_at) cur.finishedCount++;
+      if ((a.score ?? 0) > cur.bestScore) {
+        cur.bestAttemptId = a.id;
+        cur.bestScore = a.score ?? 0;
+      }
+      byExam.set(a.exam_id, cur);
+    }
+
+    const maxAttemptsByExam = new Map(exams.map((e) => [e.id, (e as { max_attempts?: number }).max_attempts ?? 1]));
     res.json(
-      exams.map((e) => ({
-        ...e,
-        attemptId: attemptMap.get(e.id)?.id,
-        attempted: !!attemptMap.get(e.id),
-        completed: attemptMap.get(e.id)?.finished ?? false,
-      }))
+      exams.map((e) => {
+        const summary = byExam.get(e.id);
+        const maxAttempts = maxAttemptsByExam.get(e.id) ?? 1;
+        const finishedCount = summary?.finishedCount ?? 0;
+        const canRetry = finishedCount < maxAttempts;
+        return {
+          ...e,
+          attemptId: summary?.bestAttemptId,
+          attempted: (summary?.finishedCount ?? 0) > 0,
+          completed: (summary?.finishedCount ?? 0) > 0,
+          bestScore: summary?.bestScore,
+          attemptsUsed: finishedCount,
+          maxAttempts,
+          canRetry,
+        };
+      })
     );
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
@@ -130,44 +152,29 @@ router.post(
     }
     const examId = req.params.id;
     const exams = await examService.listExamsForCourse(req.user.courseId);
-    if (!exams.some((e) => e.id === examId)) {
+    const exam = exams.find((e) => e.id === examId);
+    if (!exam) {
       res.status(403).json({ error: 'Exam not available for your course' });
       return;
     }
+    const maxAttempts = (exam as { max_attempts?: number }).max_attempts ?? 1;
     try {
-      const existing = await examService.getExistingAttempt(examId, req.user.id);
-      if (existing) {
-        if (existing.finished_at) {
-          res.status(400).json({ error: 'already attempted' });
-          return;
-        }
+      const unfinished = await examService.getUnfinishedAttempt(examId, req.user.id);
+      if (unfinished) {
         const examData = await examService.getExamForStudent(examId);
-        res.status(200).json({ attemptId: existing.id, ...examData });
+        res.status(200).json({ attemptId: unfinished.id, ...examData });
+        return;
+      }
+      const finishedCount = await examService.countFinishedAttempts(examId, req.user.id);
+      if (finishedCount >= maxAttempts) {
+        res.status(400).json({ error: 'no_more_attempts', message: 'Ya usaste todos los intentos permitidos para este examen.' });
         return;
       }
       const attempt = await examService.createAttempt(examId, req.user.id);
       const examData = await examService.getExamForStudent(examId);
       res.status(201).json({ attemptId: attempt.id, ...examData });
     } catch (e) {
-      const msg = (e as Error).message;
-      const isDuplicate = /duplicate key|unique constraint.*exam_attempts_exam_id_user_id/i.test(msg);
-      if (isDuplicate) {
-        try {
-          const existing = await examService.getExistingAttempt(examId, req.user.id);
-          if (existing) {
-            if (existing.finished_at) {
-              res.status(400).json({ error: 'already attempted' });
-              return;
-            }
-            const examData = await examService.getExamForStudent(examId);
-            res.status(200).json({ attemptId: existing.id, ...examData });
-            return;
-          }
-        } catch {
-          // fallback
-        }
-      }
-      res.status(500).json({ error: msg.includes('duplicate') || msg.includes('unique constraint') ? 'already attempted' : msg });
+      res.status(500).json({ error: (e as Error).message });
     }
   }
 );
@@ -207,18 +214,12 @@ router.get('/exams/:id/my-attempt', [param('id').isUUID()], async (req: Authenti
     return;
   }
   try {
-    const { data } = await supabaseAdmin
-      .from('exam_attempts')
-      .select('id')
-      .eq('exam_id', req.params.id)
-      .eq('user_id', req.user.id)
-      .not('finished_at', 'is', null)
-      .maybeSingle();
-    if (!data) {
+    const attemptId = await examService.getBestAttemptIdForUserExam(req.params.id, req.user.id);
+    if (!attemptId) {
       res.status(404).json({ error: 'No attempt found' });
       return;
     }
-    res.json({ attemptId: data.id });
+    res.json({ attemptId });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
@@ -297,6 +298,47 @@ router.get('/progress', async (req: AuthenticatedRequest, res: Response) => {
       examsCompleted: completedExams,
       examResultsTotal: examResults.length,
     });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+// --- Notifications (avisos) ---
+router.get('/notifications', async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user?.id) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+  try {
+    const list = await notificationService.listNotificationsForStudent(req.user.id, req.user.cohortId ?? null);
+    res.json(list);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/notifications/unread-count', async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user?.id) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+  try {
+    const count = await notificationService.getUnreadCount(req.user.id, req.user.cohortId ?? null);
+    res.json({ count });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.post('/notifications/:id/read', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty() || !req.user?.id) {
+    res.status(400).json({ error: 'Invalid request' });
+    return;
+  }
+  try {
+    await notificationService.markAsRead(req.params.id, req.user.id);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }

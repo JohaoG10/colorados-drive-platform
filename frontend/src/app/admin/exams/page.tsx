@@ -14,6 +14,8 @@ interface Exam {
   course_id?: string;
   question_count: number;
   passing_score: number;
+  duration_minutes?: number | null;
+  max_attempts?: number;
 }
 
 interface Course {
@@ -43,6 +45,8 @@ export default function AdminExamsPage() {
     courseId: '',
     questionCount: 10,
     passingScore: 70,
+    durationMinutes: '' as number | '',
+    maxAttempts: 1,
   });
   const [message, setMessage] = useState('');
   const [apiError, setApiError] = useState('');
@@ -102,7 +106,7 @@ export default function AdminExamsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error');
       setMessage(scope === 'subject' ? 'Examen creado. Gestiona el banco de preguntas de la materia.' : 'Examen creado. Agrega preguntas desde el detalle.');
-      setForm({ title: '', subjectId: '', courseId: '', questionCount: 10, passingScore: 70 });
+      setForm({ title: '', subjectId: '', courseId: '', questionCount: 10, passingScore: 70, durationMinutes: '', maxAttempts: 1 });
       setShowForm(false);
       load();
     } catch (err) {
@@ -251,6 +255,28 @@ export default function AdminExamsPage() {
                 className="w-full px-4 py-2 rounded-lg border"
               />
             </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Duración (minutos)</label>
+              <input
+                type="number"
+                min={1}
+                placeholder="Sin límite"
+                value={form.durationMinutes === '' ? '' : form.durationMinutes}
+                onChange={(e) => setForm({ ...form, durationMinutes: e.target.value === '' ? '' : parseInt(e.target.value) || 1 })}
+                className="w-full px-4 py-2 rounded-lg border"
+              />
+              <p className="text-xs text-neutral-500 mt-0.5">Dejar vacío = sin límite de tiempo</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Intentos máximos por usuario</label>
+              <input
+                type="number"
+                min={1}
+                value={form.maxAttempts}
+                onChange={(e) => setForm({ ...form, maxAttempts: parseInt(e.target.value) || 1 })}
+                className="w-full px-4 py-2 rounded-lg border"
+              />
+            </div>
           </div>
           <div className="flex gap-3 pt-1">
             <button type="submit" className="px-5 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700">
@@ -286,6 +312,8 @@ export default function AdminExamsPage() {
                 <th className="px-6 py-3 text-left text-sm font-semibold">Examen</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Alcance</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Preguntas</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold">Duración</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold">Intentos</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Mínimo</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Acciones</th>
               </tr>
@@ -296,6 +324,10 @@ export default function AdminExamsPage() {
                   <td className="px-6 py-4 font-medium text-neutral-900">{ex.title}</td>
                   <td className="px-6 py-4 text-neutral-600 text-sm">{getExamScope(ex)}</td>
                   <td className="px-6 py-4 text-neutral-600">{ex.question_count} preguntas</td>
+                  <td className="px-6 py-4 text-neutral-600 text-sm">
+                    {ex.duration_minutes != null ? `${ex.duration_minutes} min` : 'Sin límite'}
+                  </td>
+                  <td className="px-6 py-4 text-neutral-600 text-sm">{ex.max_attempts ?? 1}</td>
                   <td className="px-6 py-4">
                     <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-neutral-100 text-neutral-700">
                       Mín. {ex.passing_score}%
