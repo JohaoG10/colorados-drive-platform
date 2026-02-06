@@ -107,7 +107,7 @@ git push -u origin main
 4. **Variables** (añade cada una):
    - `PORT` = `3001`
    - `NODE_ENV` = `production`
-   - `CORS_ORIGIN` = la URL de Vercel del Paso 2 (ej. `https://colorados-drive-platform.vercel.app`) **sin** barra final.
+   - `CORS_ORIGIN` = orígenes permitidos separados por coma. Ejemplo: `https://colorados-drive-platform.vercel.app,https://*.vercel.app` (dominio principal + previews de Vercel).
    - `SUPABASE_URL` = tu URL de Supabase.
    - `SUPABASE_ANON_KEY` = tu anon key.
    - `SUPABASE_SERVICE_KEY` = tu service role key.
@@ -135,7 +135,7 @@ El backend está preparado para Render (tipos TypeScript en `dependencies` para 
 5. **Environment Variables** (mismas que en Railway):
    - `PORT` = `3001`
    - `NODE_ENV` = `production`
-   - `CORS_ORIGIN` = URL de Vercel (sin barra final).
+   - `CORS_ORIGIN` = orígenes permitidos separados por coma. Ejemplo: `https://colorados-drive-platform.vercel.app,https://*.vercel.app` (dominio principal + previews).
    - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET`, `JWT_SECRET`.
 6. **Create Web Service**. Cuando termine, copia la URL (ej. `https://colorados-drive-api.onrender.com`).
 

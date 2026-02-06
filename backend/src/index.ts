@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import { config } from './config';
+import { config, isOriginAllowed } from './config';
 import authRouter from './routers/authRouter';
 import adminRouter from './routers/adminRouter';
 import studentRouter from './routers/studentRouter';
@@ -11,7 +11,13 @@ const app = express();
 
 app.use(helmet());
 app.use(cors({
-  origin: config.corsOrigin === '*' ? '*' : config.corsOrigin || (config.nodeEnv === 'development' ? '*' : undefined),
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      callback(null, origin ?? true);
+    } else {
+      callback(null, false);
+    }
+  },
   credentials: true,
 }));
 app.use(morgan('combined'));
