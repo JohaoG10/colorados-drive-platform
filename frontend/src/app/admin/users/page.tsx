@@ -327,7 +327,8 @@ export default function AdminUsersPage() {
         {loading ? (
           <div className="p-8 text-center text-neutral-500">Cargando...</div>
         ) : (
-          <table className="w-full">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px]">
             <thead className="bg-neutral-50/80 border-b border-neutral-100">
               <tr>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Usuario</th>
@@ -372,7 +373,8 @@ export default function AdminUsersPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         )}
       </div>
 

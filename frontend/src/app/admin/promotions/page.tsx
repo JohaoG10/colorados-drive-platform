@@ -227,7 +227,7 @@ export default function ReportesPorCursoPage() {
           ) : reportError ? (
             <div className="p-6 text-red-600">{reportError}</div>
           ) : report ? (
-            <div className="p-6 overflow-auto max-h-[500px]">
+            <div className="p-6 overflow-auto overflow-x-auto max-h-[500px]">
               <div className="flex flex-wrap items-center gap-2 mb-4">
                 <p className="font-medium text-neutral-900">{report.cohort?.courseName || 'Curso'} Nro {report.cohort?.name || ''}</p>
                 <button
@@ -238,7 +238,7 @@ export default function ReportesPorCursoPage() {
                   Descargar Excel (CSV)
                 </button>
               </div>
-              <table className="w-full text-sm">
+              <table className="w-full text-sm min-w-[400px]">
                 <thead>
                   <tr className="border-b">
                     <th className="text-left py-2 font-medium">Estudiante</th>

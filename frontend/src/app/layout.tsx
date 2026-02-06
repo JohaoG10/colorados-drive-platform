@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Outfit } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/contexts/AuthContext';
@@ -12,6 +12,12 @@ const outfit = Outfit({
 export const metadata: Metadata = {
   title: 'Colorados Drive | Escuela de Conducción',
   description: 'Plataforma de formación para conductores - Santo Domingo, Ecuador',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
 };
 
 export default function RootLayout({

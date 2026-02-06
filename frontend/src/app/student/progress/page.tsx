@@ -112,7 +112,8 @@ export default function StudentProgressPage() {
           <div className="px-6 py-4 border-b border-neutral-100 bg-neutral-50/50">
             <h3 className="font-semibold text-neutral-900">Historial de exámenes</h3>
           </div>
-          <table className="w-full">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[320px]">
             <thead className="bg-neutral-50/50">
               <tr>
                 <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Examen</th>
@@ -137,7 +138,8 @@ export default function StudentProgressPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       )}
 

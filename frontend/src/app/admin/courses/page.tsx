@@ -410,7 +410,8 @@ export default function AdminCoursesPage() {
             {loading ? <div className="p-8 text-center text-neutral-500">Cargando...</div> : courses.length === 0 ? (
               <div className="p-8 text-center text-neutral-500">No hay tipos de curso. Crea el primero.</div>
             ) : (
-              <table className="w-full">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[320px]">
                 <thead className="bg-neutral-50/50">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Nombre</th>
@@ -428,6 +429,7 @@ export default function AdminCoursesPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
 
@@ -438,7 +440,8 @@ export default function AdminCoursesPage() {
             {cohorts.length === 0 ? (
               <div className="p-8 text-center text-neutral-500">No hay números de curso. Crea uno arriba.</div>
             ) : (
-              <table className="w-full">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[320px]">
                 <thead className="bg-neutral-50/50">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Curso completo</th>
@@ -456,6 +459,7 @@ export default function AdminCoursesPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </>
@@ -522,7 +526,8 @@ export default function AdminCoursesPage() {
             {loading ? (
               <div className="p-8 text-center text-neutral-500">Cargando...</div>
             ) : (
-              <table className="w-full">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[400px]">
                 <thead className="bg-neutral-50/50">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Materia</th>
@@ -542,6 +547,7 @@ export default function AdminCoursesPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </>
