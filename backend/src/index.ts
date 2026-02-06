@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
@@ -10,7 +10,7 @@ import studentRouter from './routers/studentRouter';
 const app = express();
 
 app.use(helmet());
-app.use(cors({ 
+app.use(cors({
   origin: config.corsOrigin === '*' ? '*' : config.corsOrigin || (config.nodeEnv === 'development' ? '*' : undefined),
   credentials: true,
 }));
@@ -21,11 +21,11 @@ app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/student', studentRouter);
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.use((_req, res) => {
+app.use((_req: Request, res: Response) => {
   res.status(404).json({ error: 'Not found' });
 });
 

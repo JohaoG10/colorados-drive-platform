@@ -4,12 +4,22 @@ import path from 'path';
 
 const BUCKET = 'colorados-drive';
 
+/** Tipo de archivo subido por Multer (compatible con @types/multer) */
+export type MulterFile = {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+};
+
 /**
  * Upload file to Supabase Storage and return public URL.
  * Create bucket "colorados-drive" in Supabase Dashboard (Storage) with public access.
  */
 export async function uploadFile(
-  file: Express.Multer.File,
+  file: MulterFile,
   folder: 'contents' | 'questions'
 ): Promise<string> {
   const ext = path.extname(file.originalname) || '.bin';

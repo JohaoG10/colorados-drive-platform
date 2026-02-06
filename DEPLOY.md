@@ -119,6 +119,8 @@ git push -u origin main
 
 ### Opción B: Render
 
+El backend está preparado para Render (tipos TypeScript en `dependencies` para que el build funcione con `npm install && npm run build`).
+
 1. Entra en **[render.com](https://render.com)** e inicia sesión con **GitHub**.
 2. **New +** → **Web Service**.
 3. Conecta el repo **colorados-drive-platform**.

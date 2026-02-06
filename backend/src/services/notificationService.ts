@@ -48,7 +48,7 @@ export async function listNotificationsForAdmin(cohortId?: string) {
   if (error) throw new Error(error.message);
 
   return (data || []).map((n) => {
-    const cohort = n.cohorts as { id: string; name: string; code: string; courses?: { name: string } } | null;
+    const cohort = n.cohorts as unknown as { id: string; name: string; code: string; courses?: { name: string } } | null;
     const courseName = cohort?.courses?.name;
     return {
       id: n.id,
