@@ -4,11 +4,12 @@
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Courses
+-- Courses (price = precio del tipo de curso, ej. Tipo A, Tipo B)
 CREATE TABLE IF NOT EXISTS courses (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name VARCHAR(100) NOT NULL,
   code VARCHAR(20) UNIQUE NOT NULL,
+  price DECIMAL(10,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -57,6 +58,14 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   course_id UUID REFERENCES courses(id) ON DELETE SET NULL,
   cohort_id UUID REFERENCES cohorts(id) ON DELETE SET NULL,
   must_change_password BOOLEAN DEFAULT false,
+  total_amount DECIMAL(10,2),
+  amount_paid DECIMAL(10,2) NOT NULL DEFAULT 0,
+  birth_date DATE,
+  address TEXT,
+  phone VARCHAR(50),
+  start_date DATE,
+  end_date DATE,
+  modality VARCHAR(30),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -184,3 +193,56 @@ CREATE INDEX idx_notifications_cohort ON notifications(cohort_id);
 CREATE INDEX idx_notifications_created_at ON notifications(created_at DESC);
 CREATE INDEX idx_notification_reads_user ON notification_reads(user_id);
 CREATE INDEX idx_notification_reads_notification ON notification_reads(notification_id);
+
+-- Instructors (todos disponibles 6am - 11pm)
+CREATE TABLE IF NOT EXISTS instructors (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  full_name VARCHAR(150) NOT NULL,
+  email VARCHAR(255),
+  phone VARCHAR(30),
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Course schedules: un registro = un slot ocupado (cohort + instructor + día + hora entera 6-23)
+CREATE TABLE IF NOT EXISTS course_schedules (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  cohort_id UUID NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
+  instructor_id UUID NOT NULL REFERENCES instructors(id) ON DELETE RESTRICT,
+  day_of_week SMALLINT NOT NULL CHECK (day_of_week >= 1 AND day_of_week <= 7),
+  start_time TIME NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT course_schedule_hour_only CHECK (
+    start_time >= '06:00' AND start_time <= '23:00'
+    AND EXTRACT(MINUTE FROM start_time) = 0 AND EXTRACT(SECOND FROM start_time) = 0
+  ),
+  UNIQUE(cohort_id, instructor_id, day_of_week, start_time)
+);
+
+CREATE INDEX idx_course_schedules_cohort ON course_schedules(cohort_id);
+CREATE INDEX idx_course_schedules_instructor ON course_schedules(instructor_id);
+
+-- User profile extensions
+ALTER TABLE user_profiles
+  ADD COLUMN IF NOT EXISTS citizenship VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS blood_type VARCHAR(10),
+  ADD COLUMN IF NOT EXISTS schedule_id UUID REFERENCES course_schedules(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS total_amount DECIMAL(10,2),
+  ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(10,2);
+
+CREATE INDEX IF NOT EXISTS idx_user_profiles_schedule ON user_profiles(schedule_id);
+
+-- Payments (abonos por alumno)
+CREATE TABLE IF NOT EXISTS payments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  amount DECIMAL(10,2) NOT NULL CHECK (amount > 0),
+  paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  note TEXT,
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
+CREATE INDEX IF NOT EXISTS idx_payments_paid_at ON payments(paid_at DESC);

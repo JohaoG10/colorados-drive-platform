@@ -114,6 +114,12 @@ export async function getUnreadCount(userId: string, cohortId: string | null): P
   return notifications.length - readCount;
 }
 
+/** Eliminar un aviso (y sus lecturas por CASCADE) */
+export async function deleteNotification(notificationId: string) {
+  const { error } = await supabaseAdmin.from('notifications').delete().eq('id', notificationId);
+  if (error) throw new Error(error.message);
+}
+
 /** Marcar un aviso como leído */
 export async function markAsRead(notificationId: string, userId: string) {
   const { error } = await supabaseAdmin

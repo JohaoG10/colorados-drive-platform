@@ -22,8 +22,13 @@ export default function ReportesPorCursoPage() {
   const [loading, setLoading] = useState(true);
   const [selectedCohort, setSelectedCohort] = useState<Cohort | null>(null);
   const [report, setReport] = useState<{
-    cohort: { name: string; code: string; courseName?: string };
-    students: { fullName: string; email: string; examResults: { attemptId: string; examTitle: string; score: number; passed: boolean }[]; totalTimeSeconds: number }[];
+    cohort: { name: string; code: string; courseName?: string; courseCode?: string; coursePrice?: number | null };
+    students: {
+      fullName: string; email: string; cedula?: string | null; citizenship?: string | null; bloodType?: string | null;
+      birthDate?: string | null; address?: string | null; phone?: string | null; startDate?: string | null; endDate?: string | null; modality?: string | null;
+      examResults: { attemptId: string; examTitle: string; score: number; passed: boolean }[];
+      totalTimeSeconds: number;
+    }[];
   } | null>(null);
   const [reportError, setReportError] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
@@ -127,24 +132,95 @@ export default function ReportesPorCursoPage() {
       .finally(() => setDetailLoading(false));
   }, [detailAttemptId, token]);
 
+  const formatDate = (d: string | null | undefined) => (d ? new Date(d).toLocaleDateString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-');
+  const generatedAt = new Date().toLocaleString('es-EC', { dateStyle: 'long', timeStyle: 'short' });
+
   const downloadExcel = () => {
     if (!report) return;
-    const courseLabel = `${report.cohort?.courseName || 'Curso'} Nro ${report.cohort?.name || ''}`;
-    const headers = ['Estudiante', 'Email', 'Tiempo en plataforma', 'Exámenes (detalle)'];
-    const rows = (report.students || []).map((s) => {
+    const cohort = report.cohort;
+    const courseLabel = `${cohort?.courseName || 'Curso'} Nro ${cohort?.name || ''}`;
+    const escape = (v: string) => (v.includes(';') || v.includes('"') || v.includes('\n') ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+    const empty = (x: string | null | undefined) => (x != null && String(x).trim() !== '' ? String(x).trim() : '-');
+
+    const lines: string[] = [];
+
+    lines.push(escape('REPORTE DE CURSO — Colorados Drive'));
+    lines.push('');
+    lines.push(escape(courseLabel));
+    lines.push(escape(`Generado el ${generatedAt}`));
+    lines.push('');
+    lines.push('');
+    lines.push(escape('——— DATOS DEL CURSO ———'));
+    lines.push('');
+    lines.push(escape('Campo') + ';' + escape('Valor'));
+    lines.push(escape('Tipo de curso') + ';' + escape(cohort?.courseName ?? '-'));
+    lines.push(escape('Código del curso') + ';' + escape(cohort?.courseCode ?? '-'));
+    lines.push(escape('Número de curso') + ';' + escape(cohort?.name ?? '-'));
+    lines.push(escape('Código de cohorte') + ';' + escape(cohort?.code ?? '-'));
+    lines.push(escape('Precio (USD)') + ';' + (cohort?.coursePrice != null ? escape(String(cohort.coursePrice)) : escape('-')));
+    lines.push(escape('Fecha de generación') + ';' + escape(generatedAt));
+    lines.push('');
+    lines.push('');
+
+    const students = report.students || [];
+    const studentHeaders = [
+      'Nº',
+      'Nombre completo',
+      'Email',
+      'Cédula',
+      'Ciudadanía',
+      'Tipo de sangre',
+      'Fecha de nacimiento',
+      'Dirección',
+      'Teléfono',
+      'Fecha de inicio',
+      'Fecha de término',
+      'Modalidad',
+      'Tiempo en plataforma',
+      'Exámenes (resultado por línea)',
+    ];
+    lines.push(escape(`——— LISTADO DE ESTUDIANTES (${courseLabel}) ———`));
+    lines.push(escape(`Total: ${students.length} estudiante${students.length !== 1 ? 's' : ''}`));
+    lines.push('');
+    lines.push(studentHeaders.map(escape).join(';'));
+
+    students.forEach((s, idx) => {
       const timeStr = formatTime(s.totalTimeSeconds ?? 0);
-      const examsStr = (s.examResults || [])
-        .map((e) => `${e.examTitle}: ${e.score?.toFixed(0)}% ${e.passed ? 'Aprobado' : 'No aprobado'}`)
-        .join('; ') || '-';
-      return [s.fullName || s.email, s.email, timeStr, examsStr];
+      const examsStr =
+        s.examResults?.length > 0
+          ? s.examResults
+              .map((e) => `${e.examTitle}: ${e.score?.toFixed(0)}% — ${e.passed ? 'Aprobado' : 'No aprobado'}`)
+              .join('\n')
+          : '-';
+      const row = [
+        String(idx + 1),
+        empty(s.fullName || s.email),
+        empty(s.email),
+        empty(s.cedula),
+        empty(s.citizenship),
+        empty(s.bloodType),
+        formatDate(s.birthDate),
+        empty(s.address),
+        empty(s.phone),
+        formatDate(s.startDate),
+        formatDate(s.endDate),
+        empty(s.modality),
+        timeStr,
+        examsStr,
+      ];
+      lines.push(row.map(escape).join(';'));
     });
-    const escape = (v: string) => (v.includes(';') || v.includes('"') || v.includes('\n') ? `"${v.replace(/"/g, '""')}"` : v);
-    const csv = [headers.map(escape).join(';'), ...rows.map((r) => r.map(escape).join(';'))].join('\n');
+
+    lines.push('');
+    lines.push(escape(`Total de estudiantes: ${students.length}`));
+    lines.push(escape('Fin del reporte'));
+
+    const csv = lines.join('\r\n');
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Reporte_${courseLabel.replace(/\s+/g, '_')}.csv`;
+    a.download = `Reporte_${courseLabel.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };

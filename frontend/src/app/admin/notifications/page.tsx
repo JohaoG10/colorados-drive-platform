@@ -77,6 +77,26 @@ export default function AdminNotificationsPage() {
     loadNotifications();
   }, [token, filterCohortId]);
 
+  const handleDelete = async (n: Notification) => {
+    if (!confirm(`¿Eliminar el aviso "${n.title}"? Esta acción no se puede deshacer.`)) return;
+    if (!token) return;
+    setMessage('');
+    try {
+      const res = await fetch(`${API_URL}/api/admin/notifications/${n.id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(token),
+      });
+      const data = await res.json();
+      if (res.status === 401) { triggerSessionExpired(); return; }
+      if (!res.ok) throw new Error(data.error || 'Error al eliminar');
+      setMessage('Aviso eliminado correctamente.');
+      setExpandedId((id) => (id === n.id ? null : id));
+      loadNotifications();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Error al eliminar');
+    }
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token || !form.cohortId.trim() || !form.title.trim() || !form.body.trim()) {
@@ -243,6 +263,16 @@ export default function AdminNotificationsPage() {
                       <div className="px-6 pb-4 pt-0 pl-[4.5rem]">
                         <div className="rounded-xl bg-neutral-100 p-4 text-sm text-neutral-700 whitespace-pre-wrap">
                           {n.body}
+                        </div>
+                        <div className="mt-3 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleDelete(n); }}
+                            className="inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-50"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            Eliminar aviso
+                          </button>
                         </div>
                       </div>
                     )}

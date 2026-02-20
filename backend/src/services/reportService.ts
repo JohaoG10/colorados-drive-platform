@@ -4,6 +4,15 @@ export interface CohortReportStudent {
   userId: string;
   email: string;
   fullName: string;
+  cedula: string | null;
+  citizenship: string | null;
+  bloodType: string | null;
+  birthDate: string | null;
+  address: string | null;
+  phone: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  modality: string | null;
   examResults: { examId: string; attemptId: string; examTitle: string; score: number; passed: boolean; finishedAt: string }[];
   totalTimeSeconds: number;
   lastActiveAt: string | null;
@@ -12,19 +21,33 @@ export interface CohortReportStudent {
 export async function getCohortReport(cohortId: string) {
   const { data: cohort, error: cohortErr } = await supabaseAdmin
     .from('cohorts')
-    .select('id, name, code, course_id, courses(name, code)')
+    .select('id, name, code, course_id, courses(id, name, code, price)')
     .eq('id', cohortId)
     .single();
 
   if (cohortErr || !cohort) throw new Error('Cohort not found');
 
-  const { data: students, error: studentsErr } = await supabaseAdmin
+  const courseRow = cohort.courses as { id?: string; name?: string; code?: string; price?: number } | null;
+
+  let studentsData: { id: string; email: string; full_name: string | null; cedula?: string | null; citizenship?: string | null; blood_type?: string | null; birth_date?: string | null; address?: string | null; phone?: string | null; start_date?: string | null; end_date?: string | null; modality?: string | null }[] | null = null;
+  const fullSelect = await supabaseAdmin
     .from('user_profiles')
-    .select('id, email, full_name')
+    .select('id, email, full_name, cedula, citizenship, blood_type, birth_date, address, phone, start_date, end_date, modality')
     .eq('cohort_id', cohortId)
     .eq('role', 'student');
-
-  if (studentsErr) throw new Error(studentsErr.message);
+  if (fullSelect.error && /birth_date|address|phone|start_date|end_date|modality|schema|does not exist/i.test(fullSelect.error.message)) {
+    const fallback = await supabaseAdmin
+      .from('user_profiles')
+      .select('id, email, full_name, cedula, citizenship, blood_type')
+      .eq('cohort_id', cohortId)
+      .eq('role', 'student');
+    if (fallback.error) throw new Error(fallback.error.message);
+    studentsData = (fallback.data || []).map((s) => ({ ...s, birth_date: null, address: null, phone: null, start_date: null, end_date: null, modality: null }));
+  } else {
+    if (fullSelect.error) throw new Error(fullSelect.error.message);
+    studentsData = fullSelect.data;
+  }
+  const students = studentsData;
 
   const report: CohortReportStudent[] = [];
 
@@ -61,6 +84,15 @@ export async function getCohortReport(cohortId: string) {
       userId: s.id,
       email: s.email,
       fullName: s.full_name || '',
+      cedula: s.cedula ?? null,
+      citizenship: s.citizenship ?? null,
+      bloodType: s.blood_type ?? null,
+      birthDate: s.birth_date ?? null,
+      address: s.address ?? null,
+      phone: s.phone ?? null,
+      startDate: s.start_date ?? null,
+      endDate: s.end_date ?? null,
+      modality: s.modality ?? null,
       examResults: [...byExam.values()].map((a) => ({
         examId: a.exam_id,
         attemptId: a.id,
@@ -79,7 +111,10 @@ export async function getCohortReport(cohortId: string) {
       id: cohort.id,
       name: cohort.name,
       code: cohort.code,
-      courseName: (cohort.courses as { name?: string })?.name,
+      courseId: courseRow?.id,
+      courseName: courseRow?.name,
+      courseCode: courseRow?.code,
+      coursePrice: courseRow?.price != null ? Number(courseRow.price) : null,
     },
     students: report,
   };

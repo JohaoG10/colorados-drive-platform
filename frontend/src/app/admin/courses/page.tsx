@@ -10,6 +10,7 @@ interface Course {
   id: string;
   name: string;
   code: string;
+  price?: number;
 }
 
 interface Subject {
@@ -41,7 +42,9 @@ export default function AdminCoursesPage() {
   const [subjectForm, setSubjectForm] = useState({ courseId: '', name: '' });
   const [contentForm, setContentForm] = useState({ subjectId: '', title: '', body: '', externalLink: '', fileUrl: '' });
   const [showCourseForm, setShowCourseForm] = useState(false);
-  const [courseForm, setCourseForm] = useState({ name: '' });
+  const [courseForm, setCourseForm] = useState({ name: '', price: '' });
+  const [editCourseModal, setEditCourseModal] = useState<Course | null>(null);
+  const [editCourseForm, setEditCourseForm] = useState({ name: '', price: '' });
   const [showNumberForm, setShowNumberForm] = useState(false);
   const [numberForm, setNumberForm] = useState({ courseId: '', number: '' });
   const [uploadingFile, setUploadingFile] = useState(false);
@@ -103,10 +106,11 @@ export default function AdminCoursesPage() {
     try {
       const name = courseForm.name.trim();
       const code = name.substring(0, 20).toUpperCase().replace(/\s+/g, '_');
+      const price = courseForm.price.trim() ? parseFloat(courseForm.price) : 0;
       const res = await fetch(`${API_URL}/api/admin/courses`, {
         method: 'POST',
         headers: { ...getAuthHeaders(token!), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, code }),
+        body: JSON.stringify({ name, code, price: isNaN(price) ? 0 : price }),
       });
       const data = await res.json();
       if (res.status === 401) {
@@ -115,8 +119,33 @@ export default function AdminCoursesPage() {
       }
       if (!res.ok) throw new Error(data.error || 'Error');
       setMessage('Tipo de curso creado. Ahora puedes crear números de curso.');
-      setCourseForm({ name: '' });
+      setCourseForm({ name: '', price: '' });
       setShowCourseForm(false);
+      load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Error');
+    }
+  };
+
+  const updateCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editCourseModal || !token) return;
+    setMessage('');
+    try {
+      const price = editCourseForm.price.trim() ? parseFloat(editCourseForm.price) : 0;
+      const res = await fetch(`${API_URL}/api/admin/courses/${editCourseModal.id}`, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: editCourseForm.name.trim() || editCourseModal.name,
+          price: isNaN(price) ? 0 : price,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 401) { triggerSessionExpired(); return; }
+      if (!res.ok) throw new Error(data.error || 'Error');
+      setMessage('Curso actualizado.');
+      setEditCourseModal(null);
       load();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Error');
@@ -357,6 +386,19 @@ export default function AdminCoursesPage() {
                     className="w-full px-4 py-2 rounded-lg border"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Precio del curso ($)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={courseForm.price}
+                    onChange={(e) => setCourseForm({ ...courseForm, price: e.target.value })}
+                    placeholder="Ej: 350.00"
+                    className="w-full px-4 py-2 rounded-lg border"
+                  />
+                  <p className="text-xs text-neutral-500 mt-1">Precio que paga cada alumno por este tipo de curso. Se puede editar después.</p>
+                </div>
                 <div className="flex gap-2">
                   <button type="submit" className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors">Crear tipo de curso</button>
                   <button type="button" onClick={() => setShowCourseForm(false)} className="px-4 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-50 transition-colors">Cancelar</button>
@@ -415,15 +457,22 @@ export default function AdminCoursesPage() {
                 <thead className="bg-neutral-50/50">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Nombre</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700 w-24">Acciones</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Precio</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700 w-32">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {courses.map((c) => (
                     <tr key={c.id} className="border-t border-neutral-100 hover:bg-neutral-50/50 transition-colors">
                       <td className="px-6 py-4 font-medium text-neutral-900">{c.name}</td>
+                      <td className="px-6 py-4 text-neutral-700">
+                        ${typeof c.price === 'number' ? c.price.toFixed(2) : (c as { price?: number }).price?.toFixed(2) ?? '0.00'}
+                      </td>
                       <td className="px-6 py-4">
-                        <button onClick={() => deleteCourse(c.id)} className="text-red-600 hover:text-red-700 hover:underline text-sm font-medium transition-colors">Eliminar</button>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => { setEditCourseModal(c); setEditCourseForm({ name: c.name, price: (c.price ?? 0).toString() }); }} className="text-red-600 hover:text-red-700 hover:underline text-sm font-medium transition-colors">Editar</button>
+                          <button type="button" onClick={() => deleteCourse(c.id)} className="text-neutral-600 hover:text-neutral-700 hover:underline text-sm font-medium transition-colors">Eliminar</button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -462,6 +511,40 @@ export default function AdminCoursesPage() {
               </div>
             )}
           </div>
+
+          {editCourseModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setEditCourseModal(null)}>
+              <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-lg font-semibold text-neutral-900 mb-4">Editar tipo de curso</h3>
+                <form onSubmit={updateCourse} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-700 mb-1">Nombre</label>
+                    <input
+                      type="text"
+                      value={editCourseForm.name}
+                      onChange={(e) => setEditCourseForm({ ...editCourseForm, name: e.target.value })}
+                      className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-700 mb-1">Precio ($)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={editCourseForm.price}
+                      onChange={(e) => setEditCourseForm({ ...editCourseForm, price: e.target.value })}
+                      className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button type="submit" className="px-4 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700">Guardar</button>
+                    <button type="button" onClick={() => setEditCourseModal(null)} className="px-4 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50">Cancelar</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </>
       )}
 

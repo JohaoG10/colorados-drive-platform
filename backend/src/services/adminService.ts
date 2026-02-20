@@ -41,10 +41,17 @@ export async function createContent(
   return data;
 }
 
+const EXTRA_PROFILE_COLUMNS = 'birth_date, address, phone, start_date, end_date, modality';
+const isExtraColumnsError = (err: unknown) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /birth_date|address|phone|start_date|end_date|modality|schema|does not exist/i.test(msg);
+};
+
 export async function listUsers(filters?: { courseId?: string; cohortId?: string; role?: string; search?: string }) {
+  const baseSelect = 'id, email, full_name, role, course_id, cohort_id, cedula, citizenship, blood_type, schedule_id, total_amount, amount_paid, created_at, courses(name, code), cohorts(id, name, code, course_id)';
   let query = supabaseAdmin
     .from('user_profiles')
-    .select('id, email, full_name, role, course_id, cohort_id, cedula, created_at, courses(name, code), cohorts(id, name, code, course_id)');
+    .select(`${baseSelect}, ${EXTRA_PROFILE_COLUMNS}`);
 
   if (filters?.cohortId) {
     query = query.eq('cohort_id', filters.cohortId);
@@ -66,19 +73,102 @@ export async function listUsers(filters?: { courseId?: string; cohortId?: string
     query = query.or(`cedula.ilike.${pattern},full_name.ilike.${pattern},email.ilike.${pattern}`);
   }
 
-  const { data, error } = await query.order('created_at', { ascending: false });
-  if (error) throw new Error(error.message);
-  return data;
+  let result = await query.order('created_at', { ascending: false });
+  if (result.error && isExtraColumnsError(result.error)) {
+    let fallback = supabaseAdmin.from('user_profiles').select(baseSelect);
+    if (filters?.cohortId) fallback = fallback.eq('cohort_id', filters.cohortId);
+    else if (filters?.courseId) {
+      const { data: cohortIds } = await supabaseAdmin.from('cohorts').select('id').eq('course_id', filters.courseId);
+      const ids = (cohortIds || []).map((c) => c.id);
+      if (ids.length > 0) fallback = fallback.or(`course_id.eq.${filters.courseId},cohort_id.in.(${ids.join(',')})`);
+      else fallback = fallback.eq('course_id', filters.courseId);
+    }
+    if (filters?.role) fallback = fallback.eq('role', filters.role);
+    if (filters?.search && filters.search.trim()) {
+      const term = filters.search.trim();
+      const pattern = `%${term}%`;
+      fallback = fallback.or(`cedula.ilike.${pattern},full_name.ilike.${pattern},email.ilike.${pattern}`);
+    }
+    result = await fallback.order('created_at', { ascending: false });
+  }
+  if (result.error) throw new Error(result.error.message);
+  const users = (result.data || []).map((u) => ({
+    ...u,
+    birth_date: (u as Record<string, unknown>).birth_date ?? null,
+    address: (u as Record<string, unknown>).address ?? null,
+    phone: (u as Record<string, unknown>).phone ?? null,
+    start_date: (u as Record<string, unknown>).start_date ?? null,
+    end_date: (u as Record<string, unknown>).end_date ?? null,
+    modality: (u as Record<string, unknown>).modality ?? null,
+  }));
+  if (!users.length) return [];
+
+  const scheduleIds = [...new Set((users as { schedule_id?: string }[]).map((u) => u.schedule_id).filter(Boolean) as string[])];
+  if (scheduleIds.length === 0) return users;
+
+  const { data: schedules } = await supabaseAdmin
+    .from('course_schedules')
+    .select('id, day_of_week, start_time, instructors(id, full_name, email)')
+    .in('id', scheduleIds);
+
+  const scheduleMap = new Map(
+    (schedules || []).map((s) => [
+      s.id,
+      {
+        id: s.id,
+        day_of_week: s.day_of_week,
+        start_time: typeof s.start_time === 'string' ? (s.start_time as string).slice(0, 5) : s.start_time,
+        instructors: (s as { instructors?: { full_name: string; email: string | null } | null }).instructors,
+      },
+    ])
+  );
+
+  return (users as Record<string, unknown>[]).map((u) => ({
+    ...u,
+    course_schedules: u.schedule_id ? scheduleMap.get(u.schedule_id as string) ?? null : null,
+  }));
 }
 
-export async function createCourse(name: string, code: string) {
-  const { data, error } = await supabaseAdmin
+function isPriceColumnError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /price|schema\s*cache|does not exist/i.test(msg);
+}
+
+export async function createCourse(name: string, code: string, price = 0) {
+  let result = await supabaseAdmin
     .from('courses')
-    .insert({ name, code })
+    .insert({ name, code, price: Number(price) })
     .select()
     .single();
-  if (error) throw new Error(error.message);
-  return data;
+  if (result.error && isPriceColumnError(result.error)) {
+    result = await supabaseAdmin
+      .from('courses')
+      .insert({ name, code })
+      .select()
+      .single();
+  }
+  if (result.error) throw new Error(result.error.message);
+  const data = result.data as Record<string, unknown>;
+  return { ...data, price: data?.price ?? price } as typeof result.data;
+}
+
+export async function updateCourse(id: string, params: { name?: string; code?: string; price?: number }) {
+  const update: Record<string, unknown> = {};
+  if (params.name !== undefined) update.name = params.name;
+  if (params.code !== undefined) update.code = params.code;
+  if (params.price !== undefined) update.price = Number(params.price);
+  if (Object.keys(update).length === 0) return null;
+  let result = await supabaseAdmin.from('courses').update(update).eq('id', id).select().single();
+  if (result.error && isPriceColumnError(result.error) && params.price !== undefined) {
+    const { price: _p, ...rest } = update;
+    if (Object.keys(rest).length > 0) {
+      result = await supabaseAdmin.from('courses').update(rest).eq('id', id).select().single();
+    }
+  }
+  if (result.error) throw new Error(result.error.message);
+  const data = result.data as Record<string, unknown>;
+  if (result.data && params.price !== undefined) (data as Record<string, unknown>).price = params.price;
+  return result.data;
 }
 
 export async function deleteCourse(id: string) {
@@ -87,9 +177,14 @@ export async function deleteCourse(id: string) {
 }
 
 export async function listCourses() {
-  const { data, error } = await supabaseAdmin.from('courses').select('*').order('name');
-  if (error) throw new Error(error.message);
-  return data;
+  let result = await supabaseAdmin.from('courses').select('id, name, code, price').order('name');
+  if (result.error && isPriceColumnError(result.error)) {
+    result = await supabaseAdmin.from('courses').select('id, name, code').order('name');
+    if (result.error) throw new Error(result.error.message);
+    return (result.data || []).map((row: Record<string, unknown>) => ({ ...row, price: 0 }));
+  }
+  if (result.error) throw new Error(result.error.message);
+  return result.data || [];
 }
 
 export async function listSubjects(courseId?: string) {
@@ -168,9 +263,9 @@ export async function deleteCohort(id: string) {
 }
 
 /**
- * Elimina el cohort y todos los usuarios (estudiantes) asignados a ese curso.
- * Libera espacio: borra usuarios en Auth (y en cascada sus intentos, respuestas, actividad).
- * El admin debe haber descargado el CSV antes.
+ * Elimina el cohort, todos los horarios (course_schedules) de ese curso y todos los usuarios
+ * (estudiantes) asignados. Libera espacio: borra usuarios en Auth (y en cascada sus intentos,
+ * respuestas, actividad). El admin debe haber descargado el CSV antes.
  */
 export async function deleteCohortWithUsers(cohortId: string): Promise<{ deletedUsers: number }> {
   const { data: profiles, error: fetchError } = await supabaseAdmin
@@ -185,6 +280,13 @@ export async function deleteCohortWithUsers(cohortId: string): Promise<{ deleted
   for (const userId of studentIds) {
     await deleteAuthUser(userId);
   }
+
+  // Eliminar todos los horarios (slots) de este cohort antes de borrar el cohort
+  const { error: schedulesError } = await supabaseAdmin
+    .from('course_schedules')
+    .delete()
+    .eq('cohort_id', cohortId);
+  if (schedulesError) throw new Error(schedulesError.message);
 
   await deleteCohort(cohortId);
   return { deletedUsers: studentIds.length };
