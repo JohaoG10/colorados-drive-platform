@@ -74,6 +74,7 @@ export async function listUsers(filters?: { courseId?: string; cohortId?: string
   }
 
   let result = await query.order('created_at', { ascending: false });
+  let rows: Record<string, unknown>[] = [];
   if (result.error && isExtraColumnsError(result.error)) {
     let fallback = supabaseAdmin.from('user_profiles').select(baseSelect);
     if (filters?.cohortId) fallback = fallback.eq('cohort_id', filters.cohortId);
@@ -89,10 +90,14 @@ export async function listUsers(filters?: { courseId?: string; cohortId?: string
       const pattern = `%${term}%`;
       fallback = fallback.or(`cedula.ilike.${pattern},full_name.ilike.${pattern},email.ilike.${pattern}`);
     }
-    result = await fallback.order('created_at', { ascending: false });
+    const fallbackResult = await fallback.order('created_at', { ascending: false });
+    if (fallbackResult.error) throw new Error(fallbackResult.error.message);
+    rows = fallbackResult.data || [];
+  } else {
+    if (result.error) throw new Error(result.error.message);
+    rows = result.data || [];
   }
-  if (result.error) throw new Error(result.error.message);
-  const users = (result.data || []).map((u) => ({
+  const users = rows.map((u) => ({
     ...u,
     birth_date: (u as Record<string, unknown>).birth_date ?? null,
     address: (u as Record<string, unknown>).address ?? null,
@@ -112,15 +117,20 @@ export async function listUsers(filters?: { courseId?: string; cohortId?: string
     .in('id', scheduleIds);
 
   const scheduleMap = new Map(
-    (schedules || []).map((s) => [
-      s.id,
-      {
-        id: s.id,
-        day_of_week: s.day_of_week,
-        start_time: typeof s.start_time === 'string' ? (s.start_time as string).slice(0, 5) : s.start_time,
-        instructors: (s as { instructors?: { full_name: string; email: string | null } | null }).instructors,
-      },
-    ])
+    (schedules || []).map((s) => {
+      const raw = s as { instructors?: { full_name: string; email: string | null } | Array<{ full_name: string; email: string | null }> };
+      const instr = raw.instructors;
+      const single = Array.isArray(instr) ? (instr[0] ?? null) : instr ?? null;
+      return [
+        s.id,
+        {
+          id: s.id,
+          day_of_week: s.day_of_week,
+          start_time: typeof s.start_time === 'string' ? (s.start_time as string).slice(0, 5) : s.start_time,
+          instructors: single,
+        },
+      ];
+    })
   );
 
   return (users as Record<string, unknown>[]).map((u) => ({
@@ -176,15 +186,15 @@ export async function deleteCourse(id: string) {
   if (error) throw new Error(error.message);
 }
 
-export async function listCourses() {
-  let result = await supabaseAdmin.from('courses').select('id, name, code, price').order('name');
+export async function listCourses(): Promise<{ id: string; name: string; code: string; price: number }[]> {
+  const result = await supabaseAdmin.from('courses').select('id, name, code, price').order('name');
   if (result.error && isPriceColumnError(result.error)) {
-    result = await supabaseAdmin.from('courses').select('id, name, code').order('name');
-    if (result.error) throw new Error(result.error.message);
-    return (result.data || []).map((row: Record<string, unknown>) => ({ ...row, price: 0 }));
+    const fallbackResult = await supabaseAdmin.from('courses').select('id, name, code').order('name');
+    if (fallbackResult.error) throw new Error(fallbackResult.error.message);
+    return (fallbackResult.data || []).map((row: Record<string, unknown>) => ({ ...row, price: 0 })) as { id: string; name: string; code: string; price: number }[];
   }
   if (result.error) throw new Error(result.error.message);
-  return result.data || [];
+  return (result.data || []) as { id: string; name: string; code: string; price: number }[];
 }
 
 export async function listSubjects(courseId?: string) {

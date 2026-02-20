@@ -62,10 +62,22 @@ export async function listCourseSchedules(cohortId?: string) {
   const { data, error } = await query;
   if (error) throw new Error(error.message);
 
-  return (data || []).map((r) => ({
-    ...r,
-    start_time: typeof r.start_time === 'string' ? r.start_time.slice(0, 5) : r.start_time,
-  })) as CourseScheduleRow[];
+  return (data || []).map((r) => {
+    const raw = r as Record<string, unknown>;
+    const instr = raw.instructors;
+    const singleInstr = Array.isArray(instr) ? (instr[0] ?? null) : instr ?? null;
+    let singleCohort = Array.isArray(raw.cohorts) ? (raw.cohorts[0] ?? null) : (raw.cohorts ?? null);
+    if (singleCohort && typeof singleCohort === 'object' && Array.isArray((singleCohort as Record<string, unknown>).courses)) {
+      const c = singleCohort as Record<string, unknown>;
+      singleCohort = { ...c, courses: (c.courses as unknown[])[0] ?? null };
+    }
+    return {
+      ...r,
+      start_time: typeof r.start_time === 'string' ? r.start_time.slice(0, 5) : r.start_time,
+      instructors: singleInstr,
+      cohorts: singleCohort,
+    };
+  }) as unknown as CourseScheduleRow[];
 }
 
 /** Obtiene o crea un slot (cohort + instructor + día + hora). Si ya existe, devuelve ese id. */
@@ -84,7 +96,7 @@ export async function getOrCreateCourseSchedule(params: {
     .eq('start_time', params.startTime)
     .maybeSingle();
   if (existing) {
-    return { id: existing.id, ...existing, start_time: typeof existing.start_time === 'string' ? existing.start_time.slice(0, 5) : existing.start_time };
+    return { ...existing, start_time: typeof existing.start_time === 'string' ? existing.start_time.slice(0, 5) : existing.start_time };
   }
   return createCourseSchedule(params);
 }
