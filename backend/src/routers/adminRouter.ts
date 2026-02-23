@@ -1143,8 +1143,8 @@ router.get('/downloads/curso', async (req: AuthenticatedRequest, res: Response) 
     res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
 
     const archive = archiver('zip', { zlib: { level: 9 } });
-    archive.on('error', (err) => {
-      res.status(500).end(String(err));
+    archive.on('error', (err: Error) => {
+      res.status(500).end(String(err?.message ?? err));
     });
     archive.pipe(res);
 
