@@ -13,7 +13,9 @@ interface LogoProps {
 const SCHOOL_NAME = 'Colorados Drive';
 const TAGLINE = 'Escuela de Conducción';
 
-export function Logo({ variant = 'default', inverted = false, href = '/', className = '' }: LogoProps) {
+export function Logo({ variant = 'default', inverted = false, href, className = '' }: LogoProps) {
+  const isLink = href !== ''; // undefined -> enlace a '/'; '' -> sin enlace
+  const effectiveHref = (href === undefined || href === '') ? '/' : href;
   const [logoSrc, setLogoSrc] = useState<string | null>('/logo.png');
   const size = variant === 'compact' ? 40 : variant === 'large' ? 64 : 48;
   const showTagline = variant === 'large';
@@ -59,8 +61,8 @@ export function Logo({ variant = 'default', inverted = false, href = '/', classN
           font-semibold tracking-tight leading-tight truncate
           transition-colors duration-200
           ${textColor}
-          ${href !== undefined ? 'group-hover:text-red-600' : ''}
-          ${inverted && href !== undefined ? 'group-hover:text-red-400' : ''}
+          ${isLink ? 'group-hover:text-red-600' : ''}
+          ${inverted && isLink ? 'group-hover:text-red-400' : ''}
           ${variant === 'compact' ? 'text-base' : variant === 'large' ? 'text-2xl' : 'text-lg'}
         `}
       >
@@ -81,10 +83,10 @@ export function Logo({ variant = 'default', inverted = false, href = '/', classN
 
   const wrapperClass = `inline-flex items-center gap-3 group ${className}`;
 
-  if (href !== undefined) {
+  if (isLink) {
     return (
       <Link
-        href={href}
+        href={effectiveHref}
         className={`${wrapperClass} focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 rounded-lg`}
       >
         {content}

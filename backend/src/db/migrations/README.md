@@ -7,6 +7,9 @@ Estas migraciones deben ejecutarse **en el SQL Editor de Supabase** (Dashboard �
 1. `009_instructors_and_schedules.sql` — instructores y horarios por curso  
 2. `010_course_price_and_payments.sql` — precio por tipo de curso, total/abonado por alumno y tabla de pagos  
 3. `011_student_extra_fields.sql` — fecha nacimiento, dirección, teléfono, fechas inicio/fin, modalidad (inscripción y reportes)  
+4. `012_attendance.sql` — tabla de asistencia (días presente/ausente/justificado por estudiante)  
+5. `013_instructor_delete_set_null.sql` — al eliminar un instructor, los horarios (course_schedules) quedan sin asignar en lugar de bloquear el delete  
+6. `014_schedule_groups_and_practice_weeks.sql` — horarios semanales (Lunes a Viernes / Fines de semana), duración de práctica (1–3 semanas) y cambios por día o resto del curso. Crea: schedule_groups, course_schedules.schedule_group_id, user_profiles.practice_weeks, user_schedule_day_override.
 
 ## Cómo aplicar la migración 010 (precio y pagos)
 

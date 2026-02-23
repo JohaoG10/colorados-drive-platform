@@ -41,10 +41,10 @@ export async function createContent(
   return data;
 }
 
-const EXTRA_PROFILE_COLUMNS = 'birth_date, address, phone, start_date, end_date, modality';
+const EXTRA_PROFILE_COLUMNS = 'birth_date, address, phone, start_date, end_date, modality, practice_weeks, practice_start_date, practice_end_date';
 const isExtraColumnsError = (err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err);
-  return /birth_date|address|phone|start_date|end_date|modality|schema|does not exist/i.test(msg);
+  return /birth_date|address|phone|start_date|end_date|modality|practice_start_date|practice_end_date|schema|does not exist/i.test(msg);
 };
 
 export async function listUsers(filters?: { courseId?: string; cohortId?: string; role?: string; search?: string }) {
@@ -105,28 +105,63 @@ export async function listUsers(filters?: { courseId?: string; cohortId?: string
     start_date: (u as Record<string, unknown>).start_date ?? null,
     end_date: (u as Record<string, unknown>).end_date ?? null,
     modality: (u as Record<string, unknown>).modality ?? null,
+    practice_weeks: (u as Record<string, unknown>).practice_weeks ?? null,
+    practice_start_date: (u as Record<string, unknown>).practice_start_date ?? null,
+    practice_end_date: (u as Record<string, unknown>).practice_end_date ?? null,
   }));
   if (!users.length) return [];
 
   const scheduleIds = [...new Set((users as { schedule_id?: string }[]).map((u) => u.schedule_id).filter(Boolean) as string[])];
   if (scheduleIds.length === 0) return users;
 
-  const { data: schedules } = await supabaseAdmin
+  let scheduleRows: { id: string; day_of_week: number; start_time: string; schedule_group_id?: string | null; instructors?: unknown }[] = [];
+  const sResult = await supabaseAdmin
     .from('course_schedules')
-    .select('id, day_of_week, start_time, instructors(id, full_name, email)')
+    .select('id, day_of_week, start_time, schedule_group_id, instructors(id, full_name, email)')
     .in('id', scheduleIds);
+  if (sResult.error && /schedule_group_id|schedule_groups|does not exist/i.test(sResult.error.message)) {
+    const fallback = await supabaseAdmin.from('course_schedules').select('id, day_of_week, start_time, instructors(id, full_name, email)').in('id', scheduleIds);
+    if (!fallback.error) scheduleRows = (fallback.data || []).map((r) => ({ ...r, schedule_group_id: null }));
+  } else {
+    if (sResult.error) throw new Error(sResult.error.message);
+    scheduleRows = sResult.data || [];
+  }
+
+  const groupIds = [...new Set(scheduleRows.map((s) => s.schedule_group_id).filter(Boolean))] as string[];
+  let groupMap = new Map<string, { type: string; start_time: string }>();
+  if (groupIds.length > 0) {
+    try {
+      const { data: groups } = await supabaseAdmin.from('schedule_groups').select('id, type, start_time').in('id', groupIds);
+      for (const g of groups || []) {
+        const id = (g as { id: string }).id;
+        const type = (g as { type: string }).type;
+        const start_time = typeof (g as { start_time?: string }).start_time === 'string' ? (g as { start_time: string }).start_time.slice(0, 5) : '';
+        groupMap.set(id, { type, start_time });
+      }
+    } catch {
+      // schedule_groups table puede no existir si no se ejecutó la migración 014
+    }
+  }
+
+  const scheduleGroupLabel = (type: string, startTime: string) =>
+    type === 'weekdays' ? `Lunes a Viernes ${startTime}` : type === 'weekends' ? `Sábado y Domingo ${startTime}` : '';
 
   const scheduleMap = new Map(
-    (schedules || []).map((s) => {
-      const raw = s as { instructors?: { full_name: string; email: string | null } | Array<{ full_name: string; email: string | null }> };
+    scheduleRows.map((s) => {
+      const raw = s as { instructors?: { full_name: string; email: string | null } | Array<{ full_name: string; email: string | null }>; schedule_group_id?: string | null };
       const instr = raw.instructors;
       const single = Array.isArray(instr) ? (instr[0] ?? null) : instr ?? null;
+      const startTime = typeof s.start_time === 'string' ? (s.start_time as string).slice(0, 5) : s.start_time;
+      const group = raw.schedule_group_id ? groupMap.get(raw.schedule_group_id) : null;
+      const label = group ? scheduleGroupLabel(group.type, group.start_time) : `Día ${(s as { day_of_week: number }).day_of_week} ${startTime}`;
       return [
         s.id,
         {
           id: s.id,
           day_of_week: s.day_of_week,
-          start_time: typeof s.start_time === 'string' ? (s.start_time as string).slice(0, 5) : s.start_time,
+          start_time: startTime,
+          schedule_group_id: raw.schedule_group_id ?? null,
+          schedule_label: label,
           instructors: single,
         },
       ];

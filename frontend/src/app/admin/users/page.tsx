@@ -29,8 +29,12 @@ interface UserRow {
     id: string;
     day_of_week: number;
     start_time: string;
+    schedule_label?: string;
     instructors?: { id?: string; full_name: string; email: string | null } | null;
   } | null;
+  practice_weeks?: number | null;
+  practice_start_date?: string | null;
+  practice_end_date?: string | null;
   created_at: string;
 }
 
@@ -53,15 +57,19 @@ export default function AdminUsersPage() {
   const [instructors, setInstructors] = useState<{ id: string; full_name: string; email: string | null; is_active: boolean }[]>([]);
   const [availableSlots, setAvailableSlots] = useState<{ day_of_week: number; start_time: string }[]>([]);
   const [editAvailableSlots, setEditAvailableSlots] = useState<{ day_of_week: number; start_time: string }[]>([]);
+  const [filterCohortId, setFilterCohortId] = useState('');
   const [form, setForm] = useState<{
     email: string; password: string; fullName: string; cedula: string; citizenship: string; bloodType: string;
     birthDate: string; address: string; phone: string; startDate: string; endDate: string; modality: string;
-    role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string; dayOfWeek: number; startTime: string;
+    practiceStartDate: string; practiceEndDate: string;
+    role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string;
+    scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string; practiceWeeks: 1 | 2 | 3 | '';
     paymentType: 'full' | 'partial'; initialPaymentAmount: string;
   }>({
     email: '', password: '', fullName: '', cedula: '', citizenship: '', bloodType: '',
     birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '',
-    role: 'student', courseId: '', cohortId: '', instructorId: '', dayOfWeek: 0, startTime: '',
+    practiceStartDate: '', practiceEndDate: '',
+    role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '',
     paymentType: 'partial', initialPaymentAmount: '',
   });
   const [error, setError] = useState('');
@@ -79,8 +87,8 @@ export default function AdminUsersPage() {
   const [activityModal, setActivityModal] = useState<{ userId: string; name: string } | null>(null);
   const [activity, setActivity] = useState<{ last_active_at: string | null; total_time_seconds: number } | null>(null);
   const [editModal, setEditModal] = useState<UserRow | null>(null);
-  const [editForm, setEditForm] = useState<{ fullName: string; cedula: string; citizenship: string; bloodType: string; role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string; dayOfWeek: number; startTime: string; password: string }>({
-    fullName: '', cedula: '', citizenship: '', bloodType: '', role: 'student', courseId: '', cohortId: '', instructorId: '', dayOfWeek: 0, startTime: '', password: '',
+  const [editForm, setEditForm] = useState<{ fullName: string; cedula: string; citizenship: string; bloodType: string; role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string; scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string; practiceWeeks: 1 | 2 | 3 | ''; practiceStartDate: string; practiceEndDate: string; password: string }>({
+    fullName: '', cedula: '', citizenship: '', bloodType: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', practiceStartDate: '', practiceEndDate: '', password: '',
   });
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
@@ -89,7 +97,10 @@ export default function AdminUsersPage() {
     if (!token) return;
     setApiError('');
     const headers = getAuthHeaders(token);
-    const url = searchQuery.trim() ? `${API_URL}/api/admin/users?search=${encodeURIComponent(searchQuery.trim())}` : `${API_URL}/api/admin/users`;
+    const params = new URLSearchParams();
+    if (searchQuery.trim()) params.set('search', searchQuery.trim());
+    if (filterCohortId) params.set('cohortId', filterCohortId);
+    const url = params.toString() ? `${API_URL}/api/admin/users?${params.toString()}` : `${API_URL}/api/admin/users`;
     fetch(url, { headers })
       .then((r) => r.json().then((data) => ({ ok: r.ok, status: r.status, data })))
       .then(({ ok, status, data }) => {
@@ -141,7 +152,9 @@ export default function AdminUsersPage() {
       setEditAvailableSlots([]);
       return;
     }
-    fetch(`${API_URL}/api/admin/available-slots?cohortId=${encodeURIComponent(editForm.cohortId)}&instructorId=${encodeURIComponent(editForm.instructorId)}`, { headers: getAuthHeaders(token) })
+    const currentScheduleId = editModal?.schedule_id ?? undefined;
+    const q = `cohortId=${encodeURIComponent(editForm.cohortId)}&instructorId=${encodeURIComponent(editForm.instructorId)}${currentScheduleId ? `&currentScheduleId=${encodeURIComponent(currentScheduleId)}` : ''}`;
+    fetch(`${API_URL}/api/admin/available-slots?${q}`, { headers: getAuthHeaders(token) })
       .then((r) => r.json())
       .then((data) => {
         const slots = Array.isArray(data?.slots) ? data.slots : [];
@@ -193,8 +206,12 @@ export default function AdminUsersPage() {
       setError('Selecciona el tipo de curso y el número. Si no hay cursos, créalos en Cursos y materias.');
       return;
     }
-    if (form.role === 'student' && (!form.instructorId || !form.dayOfWeek || !form.startTime)) {
-      setError('Selecciona instructor y un horario disponible (día y hora).');
+    if (form.role === 'student' && !form.instructorId) {
+      setError('Selecciona instructor.');
+      return;
+    }
+    if (form.role === 'student' && (!form.startTime || !form.practiceStartDate.trim() || !form.practiceEndDate.trim())) {
+      setError('Completa hora de inicio y fechas de inicio y término de prácticas.');
       return;
     }
     const courseForPrice = form.courseId ? courses.find((c) => c.id === form.courseId) : null;
@@ -219,8 +236,12 @@ export default function AdminUsersPage() {
         role: form.role,
         cohortId: form.role === 'student' ? form.cohortId || null : null,
         instructorId: form.role === 'student' ? form.instructorId || null : null,
-        dayOfWeek: form.role === 'student' ? form.dayOfWeek : null,
+        dayOfWeek: form.role === 'student' && form.scheduleType === 'single' ? form.dayOfWeek : null,
         startTime: form.role === 'student' ? form.startTime || null : null,
+        scheduleType: form.role === 'student' && (form.scheduleType === 'weekdays' || form.scheduleType === 'weekends') ? form.scheduleType : null,
+        practiceWeeks: null,
+        practiceStartDate: form.role === 'student' ? (form.practiceStartDate.trim() || null) : null,
+        practiceEndDate: form.role === 'student' ? (form.practiceEndDate.trim() || null) : null,
       };
       if (form.role === 'student' && initialPaymentAmount !== undefined) {
         body.initialPaymentAmount = initialPaymentAmount;
@@ -230,11 +251,14 @@ export default function AdminUsersPage() {
         headers: { ...getAuthHeaders(token!), 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (res.status === 401) { triggerSessionExpired(); return; }
-      if (!res.ok) throw new Error(data.error || 'Error');
+      if (!res.ok) {
+        const msg = typeof data?.error === 'string' ? data.error : Array.isArray(data?.errors) ? data.errors.map((e: { msg?: string }) => e.msg || '').join('. ') : 'Error al crear usuario';
+        throw new Error(msg);
+      }
       setSuccess('Usuario creado');
-      setForm({ email: '', password: '', fullName: '', cedula: '', citizenship: '', bloodType: '', birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '', role: 'student', courseId: '', cohortId: '', instructorId: '', dayOfWeek: 0, startTime: '', paymentType: 'partial', initialPaymentAmount: '' });
+      setForm({ email: '', password: '', fullName: '', cedula: '', citizenship: '', bloodType: '', birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '', practiceStartDate: '', practiceEndDate: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', paymentType: 'partial', initialPaymentAmount: '' });
       setShowForm(false);
       load();
     } catch (err) {
@@ -278,6 +302,7 @@ export default function AdminUsersPage() {
   const getScheduleLabel = (u: UserRow) => {
     const s = u.course_schedules;
     if (!s) return '-';
+    if (s.schedule_label) return `${s.schedule_label}${u.practice_weeks ? ` · ${u.practice_weeks} sem. práctica` : ''}`;
     const day = DAYS[s.day_of_week] || '';
     const time = typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : s.start_time;
     const inst = s.instructors?.full_name || '';
@@ -288,6 +313,7 @@ export default function AdminUsersPage() {
     setEditModal(u);
     const cohort = cohorts.find((c) => c.id === u.cohort_id);
     const s = u.course_schedules;
+    const hasGroup = s?.schedule_label && (s.schedule_label.startsWith('Lunes a Viernes') || s.schedule_label.startsWith('Sábado y Domingo'));
     setEditForm({
       fullName: u.full_name || '',
       cedula: u.cedula || '',
@@ -297,8 +323,12 @@ export default function AdminUsersPage() {
       courseId: cohort?.course_id || '',
       cohortId: u.cohort_id || '',
       instructorId: s?.instructors?.id ? String(s.instructors.id) : '',
+      scheduleType: hasGroup ? (s.schedule_label?.startsWith('Sábado') ? 'weekends' : 'weekdays') : 'single',
       dayOfWeek: s?.day_of_week ?? 0,
       startTime: s?.start_time ? (typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : String(s.start_time)) : '',
+      practiceWeeks: (u.practice_weeks === 1 || u.practice_weeks === 2 || u.practice_weeks === 3) ? u.practice_weeks : '',
+      practiceStartDate: (u as UserRow & { practice_start_date?: string | null }).practice_start_date ?? '',
+      practiceEndDate: (u as UserRow & { practice_end_date?: string | null }).practice_end_date ?? '',
       password: '',
     });
     setEditError('');
@@ -314,19 +344,27 @@ export default function AdminUsersPage() {
       setEditError('Selecciona el tipo de curso y el número');
       return;
     }
-    if (editForm.role === 'student' && (!editForm.instructorId || !editForm.dayOfWeek || !editForm.startTime)) {
-      setEditError('Selecciona instructor y un horario disponible.');
+    if (editForm.role === 'student' && !editForm.instructorId) {
+      setEditError('Selecciona instructor.');
+      return;
+    }
+    if (editForm.role === 'student' && (!editForm.startTime || !editForm.practiceStartDate.trim() || !editForm.practiceEndDate.trim())) {
+      setEditError('Completa hora de inicio y fechas de inicio y término de prácticas.');
       return;
     }
     try {
-      const body: { fullName?: string; role?: string; cohortId?: string | null; cedula?: string | null; instructorId?: string; dayOfWeek?: number; startTime?: string; citizenship?: string | null; bloodType?: string | null; password?: string } = {
+      const body: { fullName?: string; role?: string; cohortId?: string | null; cedula?: string | null; instructorId?: string; dayOfWeek?: number; startTime?: string; scheduleType?: string; practiceWeeks?: number; practiceStartDate?: string | null; practiceEndDate?: string | null; citizenship?: string | null; bloodType?: string | null; password?: string } = {
         fullName: editForm.fullName,
         role: editForm.role,
         cohortId: editForm.cohortId || null,
         cedula: editForm.cedula.trim() || null,
         instructorId: editForm.role === 'student' ? editForm.instructorId || undefined : undefined,
-        dayOfWeek: editForm.role === 'student' ? editForm.dayOfWeek : undefined,
+        dayOfWeek: editForm.role === 'student' && editForm.scheduleType === 'single' ? editForm.dayOfWeek : undefined,
         startTime: editForm.role === 'student' ? editForm.startTime || undefined : undefined,
+        scheduleType: editForm.role === 'student' ? (editForm.scheduleType === 'single' ? (editForm.dayOfWeek >= 6 ? 'weekends' : 'weekdays') : (editForm.scheduleType === 'weekdays' || editForm.scheduleType === 'weekends' ? editForm.scheduleType : undefined)) : undefined,
+        practiceWeeks: undefined,
+        practiceStartDate: editForm.role === 'student' ? (editForm.practiceStartDate.trim() || null) : undefined,
+        practiceEndDate: editForm.role === 'student' ? (editForm.practiceEndDate.trim() || null) : undefined,
         citizenship: editForm.citizenship.trim() || null,
         bloodType: editForm.bloodType || null,
       };
@@ -385,7 +423,23 @@ export default function AdminUsersPage() {
         </div>
       )}
       <div className="flex flex-wrap justify-between items-center gap-4">
-        <div className="flex gap-2 flex-1 min-w-0">
+        <div className="flex flex-wrap gap-2 flex-1 min-w-0">
+          <select
+            value={filterCohortId}
+            onChange={(e) => { setFilterCohortId(e.target.value); setLoading(true); load(); }}
+            className="form-select min-w-[200px]"
+            aria-label="Filtrar por número de curso"
+          >
+            <option value="">Todos los cursos</option>
+            {cohorts.map((c) => {
+              const courseName = courses.find((cr) => cr.id === c.course_id)?.name ?? '';
+              return (
+                <option key={c.id} value={c.id}>
+                  {courseName ? `${courseName} — ${c.name}` : c.name}
+                </option>
+              );
+            })}
+          </select>
           <form
             onSubmit={(e) => { e.preventDefault(); setLoading(true); load(); }}
             className="flex gap-2 flex-1 min-w-0"
@@ -395,15 +449,15 @@ export default function AdminUsersPage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Buscar por cédula, nombre o email..."
-              className="px-4 py-2.5 rounded-xl border border-neutral-200 min-w-[200px] focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none transition-all"
+              className="form-input min-w-[200px]"
             />
-            <button type="submit" className="px-4 py-2.5 rounded-xl border border-neutral-200 font-medium hover:bg-neutral-50 transition-colors">
+            <button type="submit" className="btn-secondary">
               Buscar
             </button>
           </form>
           <button
             onClick={() => setShowForm(!showForm)}
-            className="px-4 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 shadow-md shadow-red-600/20 hover:shadow-red-600/30 transition-all shrink-0"
+            className="btn-primary shrink-0"
           >
             {showForm ? 'Cancelar' : 'Crear usuario'}
           </button>
@@ -411,12 +465,12 @@ export default function AdminUsersPage() {
       </div>
 
       {showForm && (
-        <form onSubmit={handleCreate} className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-lg">
-          <div className="border-b border-neutral-100 bg-neutral-50/80 px-6 py-4">
+        <form onSubmit={handleCreate} className="form-card overflow-hidden">
+          <div className="form-card-header">
             <h3 className="text-lg font-semibold text-neutral-900">Nuevo usuario</h3>
             <p className="text-sm text-neutral-500">Completa los datos para dar de alta una cuenta.</p>
           </div>
-          <div className="p-6 space-y-8">
+          <div className="form-card-body space-y-8">
             {error && (
               <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
                 <svg className="h-5 w-5 shrink-0 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
@@ -431,28 +485,28 @@ export default function AdminUsersPage() {
             )}
 
             <section>
-              <h4 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-neutral-500">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-100 text-red-600">
+              <h4 className="form-section-title">
+                <span className="form-section-icon">
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
                 </span>
                 Datos personales
               </h4>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="sm:col-span-2">
-                  <label className="mb-1.5 block text-sm font-medium text-neutral-700">Nombre completo *</label>
-                  <input type="text" required value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} placeholder="Ej: María García" className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 placeholder:text-neutral-400 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                  <label className="form-label">Nombre completo *</label>
+                  <input type="text" required value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} placeholder="Ej: María García" className="form-input" />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-neutral-700">Cédula</label>
-                  <input type="text" value={form.cedula} onChange={(e) => setForm({ ...form, cedula: e.target.value })} placeholder="Ej: 1234567890" className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 placeholder:text-neutral-400 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                  <label className="form-label">Cédula</label>
+                  <input type="text" value={form.cedula} onChange={(e) => setForm({ ...form, cedula: e.target.value })} placeholder="Ej: 1234567890" className="form-input" />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-neutral-700">Ciudadanía</label>
-                  <input type="text" value={form.citizenship} onChange={(e) => setForm({ ...form, citizenship: e.target.value })} placeholder="Ej: Ecuatoriana" className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 placeholder:text-neutral-400 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                  <label className="form-label">Ciudadanía</label>
+                  <input type="text" value={form.citizenship} onChange={(e) => setForm({ ...form, citizenship: e.target.value })} placeholder="Ej: Ecuatoriana" className="form-input" />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-neutral-700">Tipo de sangre</label>
-                  <select value={form.bloodType} onChange={(e) => setForm({ ...form, bloodType: e.target.value })} className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0">
+                  <label className="form-label">Tipo de sangre</label>
+                  <select value={form.bloodType} onChange={(e) => setForm({ ...form, bloodType: e.target.value })} className="form-select">
                     <option value="">Seleccionar</option>
                     {BLOOD_TYPES.map((b) => (
                       <option key={b} value={b}>{b}</option>
@@ -464,36 +518,57 @@ export default function AdminUsersPage() {
 
             {form.role === 'student' && (
               <section className="rounded-xl border border-neutral-200 bg-neutral-50/50 p-5">
-                <h4 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-neutral-600">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-100 text-red-600">
+                <h4 className="form-section-title">
+                  <span className="form-section-icon">
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                   </span>
                   Datos de inscripción
                 </h4>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Fecha de nacimiento</label>
-                    <input type="date" value={form.birthDate} onChange={(e) => setForm({ ...form, birthDate: e.target.value })} className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                    <label className="form-label">Fecha de nacimiento</label>
+                    <input type="date" value={form.birthDate} onChange={(e) => setForm({ ...form, birthDate: e.target.value })} className="form-input" />
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Teléfono</label>
-                    <input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Ej: 0991234567" className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 placeholder:text-neutral-400 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                    <label className="form-label">Teléfono</label>
+                    <input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="Ej: 0991234567" className="form-input" />
                   </div>
                   <div className="sm:col-span-2">
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Dirección</label>
-                    <input type="text" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Ej: Av. Principal 123, ciudad" className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 placeholder:text-neutral-400 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                    <label className="form-label">Dirección</label>
+                    <input type="text" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Ej: Av. Principal 123, ciudad" className="form-input" />
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Fecha de inicio</label>
-                    <input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                    <label className="form-label">Fecha de inicio (curso)</label>
+                    <input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value, practiceStartDate: form.practiceStartDate || e.target.value })} className="form-input" />
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Fecha de término</label>
-                    <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                    <label className="form-label">Fecha de término (curso)</label>
+                    <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="form-input" />
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Modalidad</label>
-                    <select value={form.modality} onChange={(e) => setForm({ ...form, modality: e.target.value })} className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0">
+                    <label className="form-label">Inicio prácticas *</label>
+                    <input type="date" value={form.practiceStartDate} onChange={(e) => {
+                      const v = e.target.value;
+                      setForm((prev) => {
+                        const next = { ...prev, practiceStartDate: v };
+                        if (prev.practiceWeeks && v) {
+                          const d = new Date(v);
+                          d.setDate(d.getDate() + (Number(prev.practiceWeeks) || 0) * 7 - 1);
+                          next.practiceEndDate = d.toISOString().slice(0, 10);
+                        }
+                        return next;
+                      });
+                    }} className="form-input" />
+                    <p className="mt-1 text-xs text-neutral-500">Desde cuándo empieza las prácticas de conducción.</p>
+                  </div>
+                  <div>
+                    <label className="form-label">Término prácticas *</label>
+                    <input type="date" value={form.practiceEndDate} onChange={(e) => setForm({ ...form, practiceEndDate: e.target.value })} className="form-input" />
+                    <p className="mt-1 text-xs text-neutral-500">Se calcula por semanas de práctica si no lo cambias.</p>
+                  </div>
+                  <div>
+                    <label className="form-label">Modalidad</label>
+                    <select value={form.modality} onChange={(e) => setForm({ ...form, modality: e.target.value })} className="form-select">
                       <option value="">Seleccionar</option>
                       <option value="intensivo">Intensivo</option>
                       <option value="regular">Regular</option>
@@ -505,24 +580,24 @@ export default function AdminUsersPage() {
             )}
 
             <section className="border-t border-neutral-100 pt-8">
-              <h4 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-neutral-500">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-100 text-red-600">
+              <h4 className="form-section-title">
+                <span className="form-section-icon">
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
                 </span>
                 Acceso
               </h4>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-neutral-700">Email *</label>
-                  <input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="usuario@ejemplo.com" className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 placeholder:text-neutral-400 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                  <label className="form-label">Email *</label>
+                  <input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="usuario@ejemplo.com" className="form-input" />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-neutral-700">Contraseña temporal *</label>
-                  <input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Mínimo 6 caracteres" className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 placeholder:text-neutral-400 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" />
+                  <label className="form-label">Contraseña temporal *</label>
+                  <input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="Mínimo 6 caracteres" className="form-input" />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-neutral-700">Rol *</label>
-                  <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as 'admin' | 'student', courseId: '', cohortId: '', instructorId: '', dayOfWeek: 0, startTime: '' })} className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0">
+                  <label className="form-label">Rol *</label>
+                  <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as 'admin' | 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select">
                     <option value="admin">Administrador</option>
                     <option value="student">Estudiante</option>
                   </select>
@@ -531,16 +606,16 @@ export default function AdminUsersPage() {
             </section>
             {form.role === 'student' && (
               <section className="rounded-xl border border-neutral-200 bg-neutral-50/50 p-5">
-                <h4 className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-neutral-600">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-100 text-red-600">
+                <h4 className="form-section-title">
+                  <span className="form-section-icon">
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                   </span>
                   Curso y horario
                 </h4>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Tipo de curso *</label>
-                    <select value={form.courseId} onChange={(e) => setForm({ ...form, courseId: e.target.value, cohortId: '', instructorId: '', dayOfWeek: 0, startTime: '' })} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" required>
+                    <label className="form-label">Tipo de curso *</label>
+                    <select value={form.courseId} onChange={(e) => setForm({ ...form, courseId: e.target.value, cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" required>
                       <option value="">Elegir tipo</option>
                       {courses.map((c) => (
                         <option key={c.id} value={c.id}>{c.name}</option>
@@ -549,8 +624,8 @@ export default function AdminUsersPage() {
                     {courses.length === 0 && <p className="mt-1 text-xs text-amber-600">Crea un curso en Cursos y materias.</p>}
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Número de curso *</label>
-                    <select value={form.cohortId} onChange={(e) => setForm({ ...form, cohortId: e.target.value, instructorId: '', dayOfWeek: 0, startTime: '' })} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" required disabled={!form.courseId}>
+                    <label className="form-label">Número de curso *</label>
+                    <select value={form.cohortId} onChange={(e) => setForm({ ...form, cohortId: e.target.value, instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" required disabled={!form.courseId}>
                       <option value="">Elegir número</option>
                       {cohorts.filter((c) => c.course_id === form.courseId).map((c) => (
                         <option key={c.id} value={c.id}>Nro {c.name}</option>
@@ -559,8 +634,8 @@ export default function AdminUsersPage() {
                     {form.courseId && cohorts.filter((c) => c.course_id === form.courseId).length === 0 && <p className="mt-1 text-xs text-amber-600">Crea un número en Cursos y materias.</p>}
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Instructor *</label>
-                    <select value={form.instructorId} onChange={(e) => setForm({ ...form, instructorId: e.target.value, dayOfWeek: 0, startTime: '' })} className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0" required disabled={!form.cohortId}>
+                    <label className="form-label">Instructor *</label>
+                    <select value={form.instructorId} onChange={(e) => setForm({ ...form, instructorId: e.target.value, scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" required disabled={!form.cohortId}>
                       <option value="">Elegir instructor</option>
                       {instructors.map((i) => (
                         <option key={i.id} value={i.id}>{i.full_name}</option>
@@ -569,27 +644,31 @@ export default function AdminUsersPage() {
                     {form.cohortId && instructors.length === 0 && <p className="mt-1 text-xs text-amber-600">Crea instructores en Instructores.</p>}
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-neutral-700">Horario disponible *</label>
+                    <label className="form-label">Modalidad de prácticas *</label>
                     <select
-                      value={form.dayOfWeek && form.startTime ? `${form.dayOfWeek}-${form.startTime}` : ''}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (!v) { setForm({ ...form, dayOfWeek: 0, startTime: '' }); return; }
-                        const [d, t] = v.split('-');
-                        setForm({ ...form, dayOfWeek: Number(d), startTime: t });
-                      }}
-                      className="w-full rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-neutral-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/20 focus:ring-offset-0"
-                      required
-                      disabled={!form.instructorId || availableSlots.length === 0}
+                      value={form.scheduleType}
+                      onChange={(e) => setForm({ ...form, scheduleType: e.target.value as 'weekdays' | 'weekends', startTime: form.startTime })}
+                      className="form-select"
+                      disabled={!form.instructorId}
                     >
-                      <option value="">Día y hora (6:00 - 23:00)</option>
-                      {availableSlots.map((s) => (
-                        <option key={`${s.day_of_week}-${s.start_time}`} value={`${s.day_of_week}-${s.start_time}`}>
-                          {DAYS[s.day_of_week]} {typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : s.start_time}
-                        </option>
+                      <option value="weekdays">Lunes a Viernes (misma hora)</option>
+                      <option value="weekends">Fines de semana (Sábado y Domingo)</option>
+                    </select>
+                    <p className="mt-1 text-xs text-neutral-500">Las prácticas serán en ese rango de fechas (inicio y término) en esta modalidad.</p>
+                  </div>
+                  <div>
+                    <label className="form-label">Hora (inicio) *</label>
+                    <select
+                      value={form.startTime}
+                      onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+                      className="form-select"
+                      required
+                    >
+                      <option value="">06:00 - 23:00</option>
+                      {Array.from({ length: 18 }, (_, i) => `${String(i + 6).padStart(2, '0')}:00`).map((t) => (
+                        <option key={t} value={t}>{t}</option>
                       ))}
                     </select>
-                    {form.instructorId && availableSlots.length === 0 && <p className="mt-1 text-xs text-amber-600">No hay horarios libres. Elige otro instructor.</p>}
                   </div>
                 </div>
                 {form.courseId && (
@@ -613,7 +692,7 @@ export default function AdminUsersPage() {
                             {form.paymentType === 'partial' && (
                               <span className="flex items-center gap-2">
                                 <span className="text-sm text-neutral-600">$</span>
-                                <input type="number" min="0" step="0.01" value={form.initialPaymentAmount} onChange={(e) => setForm({ ...form, initialPaymentAmount: e.target.value })} placeholder="0.00" className="w-28 rounded-lg border border-neutral-200 px-3 py-1.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500" />
+                                <input type="number" min="0" step="0.01" value={form.initialPaymentAmount} onChange={(e) => setForm({ ...form, initialPaymentAmount: e.target.value })} placeholder="0.00" className="form-input w-28" />
                               </span>
                             )}
                           </div>
@@ -625,12 +704,12 @@ export default function AdminUsersPage() {
               </section>
             )}
 
-            <div className="flex flex-wrap items-center gap-3 border-t border-neutral-100 pt-6">
-              <button type="submit" className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 font-medium text-white shadow-md shadow-red-600/25 transition-all hover:bg-red-700 hover:shadow-red-600/30">
+            <div className="form-actions">
+              <button type="submit" className="btn-primary">
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
                 Crear usuario
               </button>
-              <button type="button" onClick={() => setShowForm(false)} className="rounded-xl border border-neutral-200 px-5 py-2.5 font-medium text-neutral-700 transition-colors hover:bg-neutral-50">
+              <button type="button" onClick={() => setShowForm(false)} className="btn-secondary">
                 Cancelar
               </button>
             </div>
@@ -638,52 +717,52 @@ export default function AdminUsersPage() {
         </form>
       )}
 
-      <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden shadow-sm">
+      <div className="table-wrap">
         {loading ? (
           <div className="p-8 text-center text-neutral-500">Cargando...</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px]">
-            <thead className="bg-neutral-50/80 border-b border-neutral-100">
+            <table className="table-pro min-w-[640px]">
+            <thead>
               <tr>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Usuario</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Cédula</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Rol</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Curso</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Horario</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Debe</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Actividad</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Registro</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700 w-40">Acciones</th>
+                <th>Usuario</th>
+                <th>Cédula</th>
+                <th>Rol</th>
+                <th>Curso</th>
+                <th>Horario</th>
+                <th>Debe</th>
+                <th>Actividad</th>
+                <th>Registro</th>
+                <th className="w-40">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-t border-neutral-100 hover:bg-neutral-50/50 transition-colors">
-                  <td className="px-6 py-4">
+                <tr key={u.id}>
+                  <td>
                     <p className="font-medium">{u.full_name || u.email}</p>
                     <p className="text-sm text-neutral-500">{u.email}</p>
                   </td>
-                  <td className="px-6 py-4 text-neutral-600">{u.cedula || '-'}</td>
-                  <td className="px-6 py-4">
+                  <td className="cell-muted">{u.cedula || '-'}</td>
+                  <td>
                     <span className={`px-2 py-1 rounded text-xs font-medium ${u.role === 'admin' ? 'bg-red-100 text-red-800' : 'bg-neutral-100'}`}>{u.role}</span>
                   </td>
-                  <td className="px-6 py-4 text-neutral-600">{getAssignation(u)}</td>
-                  <td className="px-6 py-4 text-neutral-600 text-sm">{u.role === 'student' ? getScheduleLabel(u) : '-'}</td>
-                  <td className="px-6 py-4 text-neutral-600 text-sm">
+                  <td className="cell-muted">{getAssignation(u)}</td>
+                  <td className="cell-muted text-sm">{u.role === 'student' ? getScheduleLabel(u) : '-'}</td>
+                  <td className="cell-muted text-sm">
                     {u.role === 'student' && (u.total_amount != null || u.amount_paid != null)
                       ? `$${Math.max(0, (Number(u.total_amount) || 0) - (Number(u.amount_paid) || 0)).toFixed(2)}`
                       : '-'}
                   </td>
-                  <td className="px-6 py-4">
+                  <td>
                     {u.role === 'student' && (
                       <button onClick={() => setActivityModal({ userId: u.id, name: u.full_name || u.email })} className="text-red-600 hover:underline text-sm">
                         Ver actividad
                       </button>
                     )}
                   </td>
-                  <td className="px-6 py-4 text-sm text-neutral-500">{u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
-                  <td className="px-6 py-4">
+                  <td className="cell-muted text-sm">{u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
+                  <td className="cell-actions">
                     <div className="flex flex-wrap gap-2">
                       <button onClick={() => setUserDetailModal(u)} className="inline-flex items-center gap-1 text-red-600 hover:underline text-sm">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
@@ -713,7 +792,7 @@ export default function AdminUsersPage() {
             ) : (
               <p className="text-neutral-500">Cargando...</p>
             )}
-            <button onClick={() => setActivityModal(null)} className="mt-4 px-4 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50 transition-colors">Cerrar</button>
+            <button onClick={() => setActivityModal(null)} className="mt-4 btn-secondary">Cerrar</button>
           </div>
         </div>
       )}
@@ -808,7 +887,7 @@ export default function AdminUsersPage() {
                 <button onClick={() => { setUserDetailModal(null); openEdit(userDetailModal); }} className="px-4 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 shadow-md transition-all">
                   Editar usuario
                 </button>
-                <button onClick={() => setUserDetailModal(null)} className="px-4 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50">Cerrar</button>
+                <button onClick={() => setUserDetailModal(null)} className="btn-secondary">Cerrar</button>
               </div>
             </div>
           </div>
@@ -823,20 +902,20 @@ export default function AdminUsersPage() {
             {editSuccess && <div className="p-3 rounded-lg bg-green-50 text-green-700 text-sm mb-4">{editSuccess}</div>}
             <form onSubmit={handleUpdate} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Nombre completo</label>
-                <input type="text" required value={editForm.fullName} onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })} className="w-full px-4 py-2 rounded-lg border" />
+                <label className="form-label">Nombre completo</label>
+                <input type="text" required value={editForm.fullName} onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })} className="form-input" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Número de cédula</label>
-                <input type="text" value={editForm.cedula} onChange={(e) => setEditForm({ ...editForm, cedula: e.target.value })} placeholder="Ej: 1234567890" className="w-full px-4 py-2 rounded-lg border" />
+                <label className="form-label">Número de cédula</label>
+                <input type="text" value={editForm.cedula} onChange={(e) => setEditForm({ ...editForm, cedula: e.target.value })} placeholder="Ej: 1234567890" className="form-input" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Ciudadanía</label>
-                <input type="text" value={editForm.citizenship} onChange={(e) => setEditForm({ ...editForm, citizenship: e.target.value })} placeholder="Ej: Ecuatoriana" className="w-full px-4 py-2 rounded-lg border" />
+                <label className="form-label">Ciudadanía</label>
+                <input type="text" value={editForm.citizenship} onChange={(e) => setEditForm({ ...editForm, citizenship: e.target.value })} placeholder="Ej: Ecuatoriana" className="form-input" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Tipo de sangre</label>
-                <select value={editForm.bloodType} onChange={(e) => setEditForm({ ...editForm, bloodType: e.target.value })} className="w-full px-4 py-2 rounded-lg border">
+                <label className="form-label">Tipo de sangre</label>
+                <select value={editForm.bloodType} onChange={(e) => setEditForm({ ...editForm, bloodType: e.target.value })} className="form-select">
                   <option value="">Seleccionar</option>
                   {BLOOD_TYPES.map((b) => (
                     <option key={b} value={b}>{b}</option>
@@ -844,8 +923,8 @@ export default function AdminUsersPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Rol</label>
-                <select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value as 'admin' | 'student', courseId: '', cohortId: '', instructorId: '', dayOfWeek: 0, startTime: '' })} className="w-full px-4 py-2 rounded-lg border">
+                <label className="form-label">Rol</label>
+                <select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value as 'admin' | 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select">
                   <option value="admin">Admin</option>
                   <option value="student">Estudiante</option>
                 </select>
@@ -853,8 +932,8 @@ export default function AdminUsersPage() {
               {editForm.role === 'student' && (
                 <>
                   <div>
-                    <label className="block text-sm font-medium text-neutral-700 mb-1">Tipo de curso</label>
-                    <select value={editForm.courseId} onChange={(e) => setEditForm({ ...editForm, courseId: e.target.value, cohortId: '' })} className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none" required>
+                    <label className="form-label">Tipo de curso</label>
+                    <select value={editForm.courseId} onChange={(e) => setEditForm({ ...editForm, courseId: e.target.value, cohortId: '' })} className="form-select" required>
                       <option value="">Elegir tipo</option>
                       {courses.map((c) => (
                         <option key={c.id} value={c.id}>{c.name}</option>
@@ -862,8 +941,8 @@ export default function AdminUsersPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-neutral-700 mb-1">Número de curso</label>
-                    <select value={editForm.cohortId} onChange={(e) => setEditForm({ ...editForm, cohortId: e.target.value, instructorId: '', dayOfWeek: 0, startTime: '' })} className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none" required disabled={!editForm.courseId}>
+                    <label className="form-label">Número de curso</label>
+                    <select value={editForm.cohortId} onChange={(e) => setEditForm({ ...editForm, cohortId: e.target.value, instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" required disabled={!editForm.courseId}>
                       <option value="">Elegir número</option>
                       {cohorts.filter((c) => c.course_id === editForm.courseId).map((c) => (
                         <option key={c.id} value={c.id}>Nro {c.name}</option>
@@ -871,8 +950,8 @@ export default function AdminUsersPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-neutral-700 mb-1">Instructor</label>
-                    <select value={editForm.instructorId} onChange={(e) => setEditForm({ ...editForm, instructorId: e.target.value, dayOfWeek: 0, startTime: '' })} className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none" disabled={!editForm.cohortId}>
+                    <label className="form-label">Instructor</label>
+                    <select value={editForm.instructorId} onChange={(e) => setEditForm({ ...editForm, instructorId: e.target.value, scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" disabled={!editForm.cohortId}>
                       <option value="">Elegir instructor</option>
                       {instructors.map((i) => (
                         <option key={i.id} value={i.id}>{i.full_name}</option>
@@ -880,35 +959,42 @@ export default function AdminUsersPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-neutral-700 mb-1">Horario (día y hora)</label>
-                    <select
-                      value={editForm.dayOfWeek && editForm.startTime ? `${editForm.dayOfWeek}-${editForm.startTime}` : ''}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (!v) { setEditForm({ ...editForm, dayOfWeek: 0, startTime: '' }); return; }
-                        const [d, t] = v.split('-');
-                        setEditForm({ ...editForm, dayOfWeek: Number(d), startTime: t });
-                      }}
-                      className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none"
-                      disabled={!editForm.instructorId}
-                    >
-                      <option value="">Elegir día y hora</option>
-                      {editAvailableSlots.map((s) => (
-                        <option key={`${s.day_of_week}-${s.start_time}`} value={`${s.day_of_week}-${s.start_time}`}>
-                          {DAYS[s.day_of_week]} {typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : s.start_time}
-                        </option>
+                    <label className="form-label">Modalidad de prácticas</label>
+                    <select value={editForm.scheduleType === 'single' ? (editForm.dayOfWeek >= 6 ? 'weekends' : 'weekdays') : editForm.scheduleType} onChange={(e) => setEditForm({ ...editForm, scheduleType: e.target.value as 'weekdays' | 'weekends' })} className="form-select" disabled={!editForm.instructorId}>
+                      <option value="weekdays">Lunes a Viernes</option>
+                      <option value="weekends">Fines de semana</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label">Hora</label>
+                    <select value={editForm.startTime} onChange={(e) => setEditForm({ ...editForm, startTime: e.target.value })} className="form-select">
+                      <option value="">06:00 - 23:00</option>
+                      {Array.from({ length: 18 }, (_, i) => `${String(i + 6).padStart(2, '0')}:00`).map((t) => (
+                        <option key={t} value={t}>{t}</option>
                       ))}
                     </select>
                   </div>
                 </>
               )}
+              {editForm.role === 'student' && (
+                <>
+                  <div>
+                    <label className="form-label">Inicio prácticas</label>
+                    <input type="date" value={editForm.practiceStartDate} onChange={(e) => setEditForm({ ...editForm, practiceStartDate: e.target.value })} className="form-input" />
+                  </div>
+                  <div>
+                    <label className="form-label">Término prácticas</label>
+                    <input type="date" value={editForm.practiceEndDate} onChange={(e) => setEditForm({ ...editForm, practiceEndDate: e.target.value })} className="form-input" />
+                  </div>
+                </>
+              )}
               <div>
-                <label className="block text-sm font-medium text-neutral-700 mb-1">Nueva contraseña (opcional)</label>
-                <input type="password" minLength={6} value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} placeholder="Dejar en blanco para no cambiar" className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none" />
+                <label className="form-label">Nueva contraseña (opcional)</label>
+                <input type="password" minLength={6} value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} placeholder="Dejar en blanco para no cambiar" className="form-input" />
               </div>
               <div className="flex gap-2">
-                <button type="submit" className="px-5 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 shadow-md transition-all">Guardar</button>
-                <button type="button" onClick={() => setEditModal(null)} className="px-5 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50">Cancelar</button>
+                <button type="submit" className="btn-primary">Guardar</button>
+                <button type="button" onClick={() => setEditModal(null)} className="btn-secondary">Cancelar</button>
               </div>
             </form>
           </div>

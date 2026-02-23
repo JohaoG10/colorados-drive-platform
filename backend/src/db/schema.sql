@@ -205,11 +205,11 @@ CREATE TABLE IF NOT EXISTS instructors (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Course schedules: un registro = un slot ocupado (cohort + instructor + día + hora entera 6-23)
+-- Course schedules: un registro = un slot ocupado (cohort + instructor + día + hora entera 6-23). instructor_id puede ser NULL si se eliminó el instructor.
 CREATE TABLE IF NOT EXISTS course_schedules (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   cohort_id UUID NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
-  instructor_id UUID NOT NULL REFERENCES instructors(id) ON DELETE RESTRICT,
+  instructor_id UUID REFERENCES instructors(id) ON DELETE SET NULL,
   day_of_week SMALLINT NOT NULL CHECK (day_of_week >= 1 AND day_of_week <= 7),
   start_time TIME NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -223,15 +223,46 @@ CREATE TABLE IF NOT EXISTS course_schedules (
 CREATE INDEX idx_course_schedules_cohort ON course_schedules(cohort_id);
 CREATE INDEX idx_course_schedules_instructor ON course_schedules(instructor_id);
 
+-- Schedule groups: horario semanal (Lunes a Viernes o Fines de semana) por cohort + instructor + hora
+CREATE TABLE IF NOT EXISTS schedule_groups (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  cohort_id UUID NOT NULL REFERENCES cohorts(id) ON DELETE CASCADE,
+  instructor_id UUID NOT NULL REFERENCES instructors(id) ON DELETE CASCADE,
+  type VARCHAR(20) NOT NULL CHECK (type IN ('weekdays', 'weekends')),
+  start_time TIME NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(cohort_id, instructor_id, type, start_time)
+);
+CREATE INDEX IF NOT EXISTS idx_schedule_groups_cohort ON schedule_groups(cohort_id);
+CREATE INDEX IF NOT EXISTS idx_schedule_groups_instructor ON schedule_groups(instructor_id);
+
+ALTER TABLE course_schedules ADD COLUMN IF NOT EXISTS schedule_group_id UUID REFERENCES schedule_groups(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_course_schedules_group ON course_schedules(schedule_group_id);
+
 -- User profile extensions
 ALTER TABLE user_profiles
   ADD COLUMN IF NOT EXISTS citizenship VARCHAR(100),
   ADD COLUMN IF NOT EXISTS blood_type VARCHAR(10),
   ADD COLUMN IF NOT EXISTS schedule_id UUID REFERENCES course_schedules(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS total_amount DECIMAL(10,2),
-  ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(10,2);
+  ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(10,2),
+  ADD COLUMN IF NOT EXISTS practice_weeks SMALLINT CHECK (practice_weeks IS NULL OR practice_weeks IN (1, 2, 3)),
+  ADD COLUMN IF NOT EXISTS practice_start_date DATE,
+  ADD COLUMN IF NOT EXISTS practice_end_date DATE;
 
 CREATE INDEX IF NOT EXISTS idx_user_profiles_schedule ON user_profiles(schedule_id);
+
+-- Override de horario un día (cambio solo ese día de la semana)
+CREATE TABLE IF NOT EXISTS user_schedule_day_override (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  day_of_week SMALLINT NOT NULL CHECK (day_of_week >= 1 AND day_of_week <= 7),
+  course_schedule_id UUID NOT NULL REFERENCES course_schedules(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, day_of_week)
+);
+CREATE INDEX IF NOT EXISTS idx_user_schedule_override_user ON user_schedule_day_override(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_schedule_override_schedule ON user_schedule_day_override(course_schedule_id);
 
 -- Payments (abonos por alumno)
 CREATE TABLE IF NOT EXISTS payments (
@@ -246,3 +277,17 @@ CREATE TABLE IF NOT EXISTS payments (
 
 CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_paid_at ON payments(paid_at DESC);
+
+-- Attendance (asistencia por estudiante y día)
+CREATE TABLE IF NOT EXISTS attendance (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  date DATE NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'present' CHECK (status IN ('present', 'absent', 'excused')),
+  source VARCHAR(20) NOT NULL DEFAULT 'auto' CHECK (source IN ('auto', 'manual')),
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_attendance_user_date ON attendance(user_id, date);
+CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date);

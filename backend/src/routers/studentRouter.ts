@@ -5,6 +5,7 @@ import { requireStudent } from '../middleware/rbac';
 import * as studentService from '../services/studentService';
 import * as examService from '../services/examService';
 import * as notificationService from '../services/notificationService';
+import * as attendanceService from '../services/attendanceService';
 import { supabaseAdmin } from '../config/supabase';
 import { AuthenticatedRequest } from '../types';
 
@@ -298,6 +299,20 @@ router.get('/progress', async (req: AuthenticatedRequest, res: Response) => {
       examsCompleted: completedExams,
       examResultsTotal: examResults.length,
     });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+// --- Asistencia: registro automático al entrar a la plataforma ---
+router.post('/attendance/check-in', async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user?.id) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+  try {
+    await attendanceService.recordCheckIn(req.user.id);
+    res.json({ ok: true, message: 'Asistencia registrada' });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }

@@ -38,7 +38,8 @@ export function DashboardLayout({
     ['/student/notifications', 'Avisos'],
     ['/student/exams', 'Exámenes'],
     ['/student/subjects', 'Materias'],
-    ['/student', 'Mi curso'],
+    ['/student/curso', 'Mi curso'],
+    ['/student', 'Inicio'],
   ];
   const currentTitle = pageTitles.find(([href]) =>
     href === '/admin' ? pathname === '/admin' : pathname === href || pathname.startsWith(href + '/')

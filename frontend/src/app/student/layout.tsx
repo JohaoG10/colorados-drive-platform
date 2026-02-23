@@ -6,14 +6,26 @@ import { useAuth } from '@/contexts/AuthContext';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { ActivityTracker } from '@/components/ActivityTracker';
 import { NotificationsBell } from '@/components/NotificationsBell';
+import { getAuthHeaders } from '@/lib/api';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
 const navItems = [
-  { href: '/student', label: 'Mi curso', icon: <CourseIcon /> },
+  { href: '/student', label: 'Inicio', icon: <HomeIcon /> },
+  { href: '/student/curso', label: 'Mi curso', icon: <CourseIcon /> },
   { href: '/student/subjects', label: 'Materias', icon: <SubjectsIcon /> },
   { href: '/student/exams', label: 'Exámenes', icon: <ExamIcon /> },
   { href: '/student/notifications', label: 'Avisos', icon: <NotificationsIcon /> },
   { href: '/student/progress', label: 'Progreso', icon: <ProgressIcon /> },
 ];
+
+function HomeIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+    </svg>
+  );
+}
 
 function NotificationsIcon() {
   return (
@@ -56,7 +68,7 @@ function ProgressIcon() {
 }
 
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, token, loading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -69,6 +81,15 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
       router.replace('/admin');
     }
   }, [user, loading, router]);
+
+  // Registro de asistencia al entrar a la plataforma (marca el día como presente)
+  useEffect(() => {
+    if (!token || user?.role !== 'student') return;
+    fetch(`${API_URL}/api/student/attendance/check-in`, {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+    }).catch(() => {});
+  }, [token, user?.role]);
 
   if (loading || !user || user.role !== 'student') {
     return (

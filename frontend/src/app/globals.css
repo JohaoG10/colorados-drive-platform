@@ -10,6 +10,16 @@
   --color-gray-light: #a3a3a3;
   --color-white: #ffffff;
   --color-off-white: #fafafa;
+  /* Design system — Colorados Drive */
+  --red-deep: #991b1b;
+  --red: #dc2626;
+  --red-light: #fecaca;
+  --red-soft: #fef2f2;
+  --red-neon-glow: rgba(248, 113, 113, 0.35);
+  --shadow-glow: 0 0 40px -8px rgba(220, 38, 38, 0.35);
+  --shadow-card-hover: 0 24px 48px -12px rgb(0 0 0 / 0.12);
+  --radius-card: 1.25rem;
+  --radius-pill: 9999px;
 }
 
 @theme inline {
@@ -22,6 +32,240 @@ body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* ========== Formularios profesionales ========== */
+.form-label {
+  display: block;
+  margin-bottom: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-gray-dark);
+}
+
+.form-input,
+.form-select,
+.form-textarea {
+  width: 100%;
+  padding: 0.625rem 1rem;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--color-black);
+  background-color: var(--color-white);
+  border: 1px solid #e5e5e5;
+  border-radius: 0.75rem;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-input::placeholder,
+.form-textarea::placeholder {
+  color: #a3a3a3;
+}
+
+.form-input:hover,
+.form-select:hover,
+.form-textarea:hover {
+  border-color: #d4d4d4;
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+.form-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23737373'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1.25rem;
+  padding-right: 2.5rem;
+}
+
+.form-textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--color-gray);
+}
+
+.form-section-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  background-color: #fef2f2;
+  color: var(--red);
+}
+
+.form-card {
+  border-radius: 1rem;
+  border: 1px solid #e5e5e5;
+  background: var(--color-white);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+}
+
+.form-card-header {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid #f5f5f5;
+  background: #fafafa;
+  border-radius: 1rem 1rem 0 0;
+}
+
+.form-card-body {
+  padding: 1.5rem;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid #f5f5f5;
+}
+
+/* ========== Tablas profesionales ========== */
+.table-wrap {
+  border-radius: 1rem;
+  border: 1px solid #e5e5e5;
+  background: var(--color-white);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+  overflow: hidden;
+}
+
+.table-pro {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.table-pro thead {
+  background: linear-gradient(180deg, #fafafa 0%, #f5f5f5 100%);
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.table-pro th {
+  padding: 0.875rem 1.25rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-gray-dark);
+  letter-spacing: 0.01em;
+}
+
+.table-pro tbody tr {
+  border-bottom: 1px solid #f5f5f5;
+  transition: background-color 0.15s;
+}
+
+.table-pro tbody tr:last-child {
+  border-bottom: none;
+}
+
+.table-pro tbody tr:hover {
+  background-color: #fafafa;
+}
+
+.table-pro td {
+  padding: 0.875rem 1.25rem;
+  color: var(--color-gray-dark);
+  vertical-align: middle;
+}
+
+.table-pro .cell-muted {
+  color: var(--color-gray);
+  font-size: 0.8125rem;
+}
+
+.table-pro .cell-actions {
+  white-space: nowrap;
+}
+
+/* Listas tipo card (alternativa a tabla en móvil) */
+.list-card {
+  border-radius: 1rem;
+  border: 1px solid #e5e5e5;
+  background: var(--color-white);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+  overflow: hidden;
+}
+
+.list-card-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #f5f5f5;
+  transition: background-color 0.15s;
+}
+
+.list-card-item:last-child {
+  border-bottom: none;
+}
+
+.list-card-item:hover {
+  background-color: #fafafa;
+}
+
+/* Botones de acción en formularios */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  font-weight: 500;
+  color: white;
+  background: linear-gradient(180deg, var(--red) 0%, #b91c1c 100%);
+  border: none;
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 14px -4px rgba(220, 38, 38, 0.4);
+  transition: transform 0.15s, box-shadow 0.2s;
+}
+
+.btn-primary:hover {
+  box-shadow: 0 6px 20px -4px rgba(220, 38, 38, 0.45);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  font-weight: 500;
+  color: var(--color-gray-dark);
+  background: var(--color-white);
+  border: 1px solid #e5e5e5;
+  border-radius: 0.75rem;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.btn-secondary:hover {
+  background: #fafafa;
+  border-color: #d4d4d4;
 }
 
 /* Road stripes accent - rayas de carretera */
@@ -103,4 +347,116 @@ body {
 
 .animate-shake {
   animation: shake 0.4s ease-in-out;
+}
+
+/* ========== Inicio / Home page: animaciones dinámicas ========== */
+
+@keyframes home-hero-glow {
+  0%, 100% { opacity: 0.4; transform: scale(1) translate(-50%, -50%); }
+  50% { opacity: 0.7; transform: scale(1.15) translate(-45%, -45%); }
+}
+
+@keyframes home-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-8px) rotate(1deg); }
+}
+
+@keyframes home-slide-up {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes home-scale-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes home-reveal-line {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes home-gradient-flow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes home-shine {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
+@keyframes home-counter-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.9; }
+}
+
+.animate-home-hero-glow {
+  animation: home-hero-glow 8s ease-in-out infinite;
+}
+
+.animate-home-float {
+  animation: home-float 6s ease-in-out infinite;
+}
+
+.animate-home-slide-up {
+  animation: home-slide-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-home-scale-in {
+  animation: home-scale-in 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-home-reveal-line {
+  transform-origin: left;
+  animation: home-reveal-line 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.animate-home-gradient-flow {
+  background-size: 200% 200%;
+  animation: home-gradient-flow 12s ease infinite;
+}
+
+/* Stagger children: add .in-view to parent when in viewport */
+.home-stagger > * {
+  opacity: 0;
+  transform: translateY(20px);
+  animation: home-slide-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.home-stagger.in-view > *:nth-child(1) { animation-delay: 0.05s; }
+.home-stagger.in-view > *:nth-child(2) { animation-delay: 0.12s; }
+.home-stagger.in-view > *:nth-child(3) { animation-delay: 0.19s; }
+.home-stagger.in-view > *:nth-child(4) { animation-delay: 0.26s; }
+.home-stagger.in-view > *:nth-child(5) { animation-delay: 0.33s; }
+.home-stagger.in-view > *:nth-child(6) { animation-delay: 0.4s; }
+.home-stagger.in-view > *:nth-child(7) { animation-delay: 0.47s; }
+.home-stagger.in-view > *:nth-child(8) { animation-delay: 0.54s; }
+.home-stagger.in-view > *:nth-child(9) { animation-delay: 0.61s; }
+.home-stagger.in-view > *:nth-child(10) { animation-delay: 0.68s; }
+
+.home-scale-stagger > * {
+  opacity: 0;
+  transform: scale(0.95);
+  animation: home-scale-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.home-scale-stagger.in-view > *:nth-child(1) { animation-delay: 0s; }
+.home-scale-stagger.in-view > *:nth-child(2) { animation-delay: 0.08s; }
+.home-scale-stagger.in-view > *:nth-child(3) { animation-delay: 0.16s; }
+.home-scale-stagger.in-view > *:nth-child(4) { animation-delay: 0.24s; }
+.home-scale-stagger.in-view > *:nth-child(5) { animation-delay: 0.32s; }
+.home-scale-stagger.in-view > *:nth-child(6) { animation-delay: 0.4s; }
+.home-scale-stagger.in-view > *:nth-child(7) { animation-delay: 0.48s; }
+.home-scale-stagger.in-view > *:nth-child(8) { animation-delay: 0.56s; }
+.home-scale-stagger.in-view > *:nth-child(9) { animation-delay: 0.64s; }
+.home-scale-stagger.in-view > *:nth-child(10) { animation-delay: 0.72s; }
+
+/* Shimmer CTA Inicio */
+@keyframes home-cta-shimmer-kf {
+  0%, 100% { background-position: 200% 0; }
+  50% { background-position: -200% 0; }
+}
+.home-cta-shimmer {
+  animation: home-cta-shimmer-kf 8s ease-in-out infinite;
 }

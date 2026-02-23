@@ -10,12 +10,16 @@ import * as instructorService from '../services/instructorService';
 import * as scheduleService from '../services/scheduleService';
 import * as notificationService from '../services/notificationService';
 import * as paymentService from '../services/paymentService';
+import * as attendanceService from '../services/attendanceService';
+import * as downloadsService from '../services/downloadsService';
 import { uploadFile } from '../services/uploadService';
 import { AuthenticatedRequest } from '../types';
+import archiver from 'archiver';
 
 const router = Router();
 router.use(authMiddleware, requireAdmin);
 
+const optionalFalsy = { values: 'falsy' as const };
 router.post(
   '/users',
   [
@@ -23,21 +27,25 @@ router.post(
     body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
     body('fullName').trim().notEmpty(),
     body('role').isIn(['admin', 'student']),
-    body('cohortId').optional().isUUID(),
-    body('cedula').optional().trim().isString(),
-    body('scheduleId').optional().isUUID(),
-    body('instructorId').optional().isUUID(),
-    body('dayOfWeek').optional().isInt({ min: 1, max: 7 }),
-    body('startTime').optional().matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/),
-    body('citizenship').optional().trim().isString().isLength({ max: 100 }),
-    body('bloodType').optional().trim().isString().isLength({ max: 10 }),
-    body('birthDate').optional().trim().isString().isLength({ max: 20 }),
-    body('address').optional().trim().isString().isLength({ max: 500 }),
-    body('phone').optional().trim().isString().isLength({ max: 50 }),
-    body('startDate').optional().trim().isString().isLength({ max: 20 }),
-    body('endDate').optional().trim().isString().isLength({ max: 20 }),
-    body('modality').optional().trim().isString().isIn(['intensivo', 'regular', 'fin de semana']),
-    body('initialPaymentAmount').optional().isFloat({ min: 0 }),
+    body('cohortId').optional(optionalFalsy).isUUID(),
+    body('cedula').optional(optionalFalsy).trim().isString(),
+    body('scheduleId').optional(optionalFalsy).isUUID(),
+    body('instructorId').optional(optionalFalsy).isUUID(),
+    body('dayOfWeek').optional(optionalFalsy).isInt({ min: 1, max: 7 }),
+    body('startTime').optional(optionalFalsy).matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/),
+    body('scheduleType').optional(optionalFalsy).isIn(['weekdays', 'weekends']),
+    body('practiceWeeks').optional(optionalFalsy).toInt().isInt({ min: 1, max: 3 }),
+    body('citizenship').optional(optionalFalsy).trim().isString().isLength({ max: 100 }),
+    body('bloodType').optional(optionalFalsy).trim().isString().isLength({ max: 10 }),
+    body('birthDate').optional(optionalFalsy).trim().isString().isLength({ max: 20 }),
+    body('address').optional(optionalFalsy).trim().isString().isLength({ max: 500 }),
+    body('phone').optional(optionalFalsy).trim().isString().isLength({ max: 50 }),
+    body('startDate').optional(optionalFalsy).trim().isString().isLength({ max: 20 }),
+    body('endDate').optional(optionalFalsy).trim().isString().isLength({ max: 20 }),
+    body('practiceStartDate').optional(optionalFalsy).trim().isString().isLength({ max: 20 }),
+    body('practiceEndDate').optional(optionalFalsy).trim().isString().isLength({ max: 20 }),
+    body('modality').optional(optionalFalsy).trim().isString().isIn(['intensivo', 'regular', 'fin de semana']),
+    body('initialPaymentAmount').optional(optionalFalsy).isFloat({ min: 0 }),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);
@@ -46,7 +54,9 @@ router.post(
       return;
     }
 
-    const { email, password, fullName, role, cohortId, cedula, scheduleId, instructorId, dayOfWeek, startTime, citizenship, bloodType, birthDate, address, phone, startDate, endDate, modality, initialPaymentAmount } = req.body;
+    const { email, password, fullName, role, cohortId, cedula, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, initialPaymentAmount } = req.body;
+    const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
+    const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : null;
 
     if (role === 'student' && !cohortId) {
       res.status(400).json({ error: 'Para estudiante selecciona un curso (Curso Tipo A/B Nro X). Créalo antes en Reportes por curso.' });
@@ -63,8 +73,10 @@ router.post(
       cedula: cedula?.trim() || null,
       scheduleId: role === 'student' ? (scheduleId || null) : null,
       instructorId: role === 'student' ? (instructorId || null) : null,
-      dayOfWeek: role === 'student' ? (dayOfWeek ?? null) : null,
-      startTime: role === 'student' ? (startTime || null) : null,
+      dayOfWeek: role === 'student' ? (dayOfWeek != null ? Number(dayOfWeek) : null) : null,
+      startTime: role === 'student' ? (startTime != null && String(startTime).trim() ? String(startTime).trim().slice(0, 5) : null) : null,
+      scheduleType: role === 'student' ? (scheduleType === 'weekdays' || scheduleType === 'weekends' ? scheduleType : null) : null,
+      practiceWeeks: role === 'student' ? practiceWeeks : null,
       citizenship: citizenship?.trim() || null,
       bloodType: bloodType?.trim() || null,
       birthDate: role === 'student' ? (birthDate?.trim() || null) : null,
@@ -72,6 +84,8 @@ router.post(
       phone: role === 'student' ? (phone?.trim() || null) : null,
       startDate: role === 'student' ? (startDate?.trim() || null) : null,
       endDate: role === 'student' ? (endDate?.trim() || null) : null,
+      practiceStartDate: role === 'student' ? (practiceStartDate?.trim() || null) : null,
+      practiceEndDate: role === 'student' ? (practiceEndDate?.trim() || null) : null,
       modality: role === 'student' ? (modality?.trim() || null) : null,
       initialPaymentAmount: role === 'student' ? (initialPaymentAmount != null ? Number(initialPaymentAmount) : null) : null,
       createdBy: req.user?.id ?? null,
@@ -142,6 +156,8 @@ router.patch(
     body('instructorId').optional().isUUID(),
     body('dayOfWeek').optional().isInt({ min: 1, max: 7 }),
     body('startTime').optional().matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/),
+    body('scheduleType').optional().isIn(['weekdays', 'weekends']),
+    body('practiceWeeks').optional().toInt().isInt({ min: 1, max: 3 }),
     body('citizenship').optional().trim().isString().isLength({ max: 100 }),
     body('bloodType').optional().trim().isString().isLength({ max: 10 }),
     body('birthDate').optional().trim().isString().isLength({ max: 20 }),
@@ -149,6 +165,8 @@ router.patch(
     body('phone').optional().trim().isString().isLength({ max: 50 }),
     body('startDate').optional().trim().isString().isLength({ max: 20 }),
     body('endDate').optional().trim().isString().isLength({ max: 20 }),
+    body('practiceStartDate').optional().trim().isString().isLength({ max: 20 }),
+    body('practiceEndDate').optional().trim().isString().isLength({ max: 20 }),
     body('modality').optional().trim().isString().isIn(['intensivo', 'regular', 'fin de semana']),
     body('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   ],
@@ -158,7 +176,9 @@ router.patch(
       res.status(400).json({ errors: errors.array() });
       return;
     }
-    const { fullName, role, cohortId, cedula, scheduleId, instructorId, dayOfWeek, startTime, citizenship, bloodType, birthDate, address, phone, startDate, endDate, modality, password } = req.body;
+    const { fullName, role, cohortId, cedula, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, password } = req.body;
+    const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
+    const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : undefined;
     if (role === 'student' && !cohortId) {
       res.status(400).json({ error: 'Para estudiante selecciona un curso (Curso Tipo A/B Nro X)' });
       return;
@@ -173,6 +193,8 @@ router.patch(
       instructorId: instructorId ?? undefined,
       dayOfWeek: dayOfWeek ?? undefined,
       startTime: startTime ?? undefined,
+      scheduleType: scheduleType ?? undefined,
+      practiceWeeks: practiceWeeks !== undefined ? practiceWeeks : undefined,
       citizenship: citizenship !== undefined ? (citizenship?.trim() || null) : undefined,
       bloodType: bloodType !== undefined ? (bloodType?.trim() || null) : undefined,
       birthDate: birthDate !== undefined ? (birthDate?.trim() || null) : undefined,
@@ -180,6 +202,8 @@ router.patch(
       phone: phone !== undefined ? (phone?.trim() || null) : undefined,
       startDate: startDate !== undefined ? (startDate?.trim() || null) : undefined,
       endDate: endDate !== undefined ? (endDate?.trim() || null) : undefined,
+      practiceStartDate: practiceStartDate !== undefined ? (practiceStartDate?.trim() || null) : undefined,
+      practiceEndDate: practiceEndDate !== undefined ? (practiceEndDate?.trim() || null) : undefined,
       modality: modality !== undefined ? (modality?.trim() || null) : undefined,
       password,
     });
@@ -190,6 +214,98 @@ router.patch(
     res.json({ message: 'User updated' });
   }
 );
+
+router.get('/schedule-groups', async (req: AuthenticatedRequest, res: Response) => {
+  const cohortId = req.query.cohortId as string | undefined;
+  if (!cohortId) {
+    res.status(400).json({ error: 'cohortId es requerido' });
+    return;
+  }
+  try {
+    const groups = await scheduleService.listScheduleGroupsByCohort(cohortId);
+    res.json(groups);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/users/:id/schedule-display', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return;
+  }
+  try {
+    const display = await scheduleService.getStudentScheduleDisplay(req.params.id);
+    res.json(display || { type: 'single', label: 'Sin horario', practiceWeeks: null, slots: [], overrides: [] });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.post(
+  '/users/:id/schedule-rest',
+  [param('id').isUUID(), body('cohortId').optional().isUUID(), body('instructorId').optional().isUUID(), body('type').optional().isIn(['weekdays', 'weekends']), body('startTime').optional().matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/), body('scheduleId').optional().isUUID()],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    const { cohortId, instructorId, type, startTime, scheduleId } = req.body;
+    if (scheduleId) {
+      const result = await scheduleService.setStudentScheduleRestOfCourse(req.params.id, { scheduleId });
+      if (result.error) {
+        res.status(400).json({ error: result.error });
+        return;
+      }
+      return res.json({ message: 'Horario actualizado para el resto del curso' });
+    }
+    if (!cohortId || !instructorId || !type || !startTime) {
+      res.status(400).json({ error: 'Indica cohortId, instructorId, type (weekdays|weekends) y startTime, o scheduleId' });
+      return;
+    }
+    const result = await scheduleService.setStudentScheduleRestOfCourse(req.params.id, { cohortId, instructorId, type, startTime });
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ message: 'Horario actualizado para el resto del curso' });
+  }
+);
+
+router.post(
+  '/users/:id/schedule-one-day',
+  [param('id').isUUID(), body('dayOfWeek').isInt({ min: 1, max: 7 }), body('courseScheduleId').isUUID()],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    const { dayOfWeek, courseScheduleId } = req.body;
+    const result = await scheduleService.setStudentScheduleOneDay(req.params.id, dayOfWeek, courseScheduleId);
+    if (result.error) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ message: 'Horario del día actualizado' });
+  }
+);
+
+router.delete('/users/:id/schedule-one-day/:dayOfWeek', [param('id').isUUID(), param('dayOfWeek').isInt({ min: 1, max: 7 })], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return;
+  }
+  const result = await scheduleService.clearStudentScheduleOneDay(req.params.id, Number(req.params.dayOfWeek));
+  if (result.error) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ message: 'Override del día eliminado' });
+});
 
 router.get('/courses', async (_req: AuthenticatedRequest, res: Response) => {
   try {
@@ -762,6 +878,64 @@ router.delete('/notifications/:id', [param('id').isUUID()], async (req: Authenti
   }
 });
 
+// --- Asistencia ---
+router.get('/attendance', async (req: AuthenticatedRequest, res: Response) => {
+  const cohortId = req.query.cohortId as string | undefined;
+  const startDate = req.query.startDate as string | undefined;
+  const endDate = req.query.endDate as string | undefined;
+  if (!cohortId || !startDate || !endDate) {
+    res.status(400).json({ error: 'cohortId, startDate y endDate son requeridos (YYYY-MM-DD)' });
+    return;
+  }
+  try {
+    const list = await attendanceService.listAttendanceByCohort(cohortId, startDate, endDate);
+    res.json(list);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/attendance/student/:userId', [param('userId').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const startDate = req.query.startDate as string | undefined;
+  const endDate = req.query.endDate as string | undefined;
+  if (!startDate || !endDate) {
+    res.status(400).json({ error: 'startDate y endDate son requeridos (YYYY-MM-DD)' });
+    return;
+  }
+  try {
+    const records = await attendanceService.getAttendanceRecords(req.params.userId, startDate, endDate);
+    res.json(records);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.post(
+  '/attendance/set',
+  [
+    body('userId').isUUID(),
+    body('date').matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('date must be YYYY-MM-DD'),
+    body('status').isIn(['present', 'absent', 'excused']),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    if (!req.user?.id) {
+      res.status(401).json({ error: 'Not authenticated' });
+      return;
+    }
+    try {
+      await attendanceService.setAttendance(req.body.userId, req.body.date, req.body.status, req.user.id);
+      res.json({ message: 'Asistencia actualizada' });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  }
+);
+
 // --- Instructors ---
 router.get('/instructors', async (_req: AuthenticatedRequest, res: Response) => {
   try {
@@ -844,6 +1018,36 @@ router.delete('/instructors/:id', [param('id').isUUID()], async (req: Authentica
   }
 });
 
+router.get('/instructors/:id/availability', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return;
+  }
+  try {
+    const weekStart = req.query.weekStart as string | undefined;
+    const weekEnd = req.query.weekEnd as string | undefined;
+    if (weekStart && weekEnd) {
+      const availability = await scheduleService.getInstructorAvailabilityForWeek(req.params.id, weekStart, weekEnd);
+      res.json(availability);
+    } else {
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + mondayOffset);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const start = monday.toISOString().slice(0, 10);
+      const end = sunday.toISOString().slice(0, 10);
+      const availability = await scheduleService.getInstructorAvailabilityForWeek(req.params.id, start, end);
+      res.json(availability);
+    }
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 // --- Slots disponibles (por curso + instructor): horarios no ocupados. currentScheduleId = opcional para reasignar (incluye ese slot como disponible)
 router.get('/available-slots', async (req: AuthenticatedRequest, res: Response) => {
   const cohortId = req.query.cohortId as string | undefined;
@@ -856,6 +1060,23 @@ router.get('/available-slots', async (req: AuthenticatedRequest, res: Response) 
   try {
     const slots = await scheduleService.getAvailableSlots(cohortId, instructorId, currentScheduleId || null);
     res.json({ slots });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+// --- Disponibilidad del instructor: slots libres y ocupados con nombre del estudiante (para mostrar en horario)
+router.get('/instructor-schedule', async (req: AuthenticatedRequest, res: Response) => {
+  const cohortId = req.query.cohortId as string | undefined;
+  const instructorId = req.query.instructorId as string | undefined;
+  const currentScheduleId = req.query.currentScheduleId as string | undefined;
+  if (!cohortId || !instructorId) {
+    res.status(400).json({ error: 'cohortId e instructorId son requeridos' });
+    return;
+  }
+  try {
+    const data = await scheduleService.getInstructorScheduleWithOccupancy(cohortId, instructorId, currentScheduleId || null);
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
@@ -895,6 +1116,45 @@ router.get('/course-schedules/:id/students', [param('id').isUUID()], async (req:
   try {
     const detail = await scheduleService.getScheduleWithStudents(req.params.id);
     res.json(detail);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+// --- Descargas: reporte curso para el estado (ZIP con 5 CSVs; cada archivo incluye código del curso en el nombre) ---
+router.get('/downloads/curso', async (req: AuthenticatedRequest, res: Response) => {
+  const cohortId = req.query.cohortId as string | undefined;
+  if (!cohortId) {
+    res.status(400).json({ error: 'cohortId es requerido' });
+    return;
+  }
+  try {
+    const data = await downloadsService.getCourseExportData(cohortId);
+    const csvAnexo2 = downloadsService.buildCsvAnexo2(data);
+    const csvAnexo4 = downloadsService.buildCsvAnexo4(data);
+    const csvListado = downloadsService.buildCsvListado(data);
+    const csvCompraPermisos = downloadsService.buildCsvCompraPermisos(data);
+    const csvLegalizacion = downloadsService.buildCsvLegalizacionPermisos(data);
+
+    const suffix = downloadsService.getCourseFileSuffix(data.cohort.code);
+    const zipName = `Reporte_curso_${suffix}_${new Date().toISOString().slice(0, 10)}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('error', (err) => {
+      res.status(500).end(String(err));
+    });
+    archive.pipe(res);
+
+    archive.append(Buffer.from(csvAnexo2, 'utf8'), { name: `ANEXO_2_Permiso_Aprendizaje_${suffix}.csv` });
+    archive.append(Buffer.from(csvAnexo4, 'utf8'), { name: `ANEXO_4_Titulo_Conductor_${suffix}.csv` });
+    archive.append(Buffer.from(csvListado, 'utf8'), { name: `Listado_Excel_${suffix}.csv` });
+    archive.append(Buffer.from(csvCompraPermisos, 'utf8'), { name: `Compra_Permisos_${suffix}.csv` });
+    archive.append(Buffer.from(csvLegalizacion, 'utf8'), { name: `Legalizacion_Permisos_${suffix}.csv` });
+
+    await archive.finalize();
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
