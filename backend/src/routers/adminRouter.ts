@@ -29,6 +29,7 @@ router.post(
     body('role').isIn(['admin', 'student']),
     body('cohortId').optional(optionalFalsy).isUUID(),
     body('cedula').optional(optionalFalsy).trim().isString(),
+    body('gender').optional(optionalFalsy).isIn(['masculino', 'femenino']),
     body('scheduleId').optional(optionalFalsy).isUUID(),
     body('instructorId').optional(optionalFalsy).isUUID(),
     body('dayOfWeek').optional(optionalFalsy).isInt({ min: 1, max: 7 }),
@@ -54,7 +55,7 @@ router.post(
       return;
     }
 
-    const { email, password, fullName, role, cohortId, cedula, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, initialPaymentAmount } = req.body;
+    const { email, password, fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, initialPaymentAmount } = req.body;
     const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
     const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : null;
 
@@ -71,6 +72,7 @@ router.post(
       courseId: null,
       cohortId: role === 'student' ? cohortId : null,
       cedula: cedula?.trim() || null,
+      gender: gender === 'masculino' || gender === 'femenino' ? gender : null,
       scheduleId: role === 'student' ? (scheduleId || null) : null,
       instructorId: role === 'student' ? (instructorId || null) : null,
       dayOfWeek: role === 'student' ? (dayOfWeek != null ? Number(dayOfWeek) : null) : null,
@@ -152,6 +154,7 @@ router.patch(
     body('role').optional().isIn(['admin', 'student']),
     body('cohortId').optional().isUUID(),
     body('cedula').optional().trim().isString(),
+    body('gender').optional().isIn(['masculino', 'femenino']),
     body('scheduleId').optional().isUUID(),
     body('instructorId').optional().isUUID(),
     body('dayOfWeek').optional().isInt({ min: 1, max: 7 }),
@@ -176,7 +179,7 @@ router.patch(
       res.status(400).json({ errors: errors.array() });
       return;
     }
-    const { fullName, role, cohortId, cedula, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, password } = req.body;
+    const { fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, password } = req.body;
     const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
     const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : undefined;
     if (role === 'student' && !cohortId) {
@@ -189,6 +192,7 @@ router.patch(
       courseId: null,
       cohortId: cohortId ?? null,
       cedula: cedula !== undefined ? (cedula?.trim() || null) : undefined,
+      gender: gender !== undefined ? (gender === 'masculino' || gender === 'femenino' ? gender : null) : undefined,
       scheduleId: scheduleId !== undefined ? scheduleId : undefined,
       instructorId: instructorId ?? undefined,
       dayOfWeek: dayOfWeek ?? undefined,
@@ -1121,7 +1125,7 @@ router.get('/course-schedules/:id/students', [param('id').isUUID()], async (req:
   }
 });
 
-// --- Descargas: reporte curso para el estado (ZIP con 5 CSVs; cada archivo incluye código del curso en el nombre) ---
+// --- Descargas: reporte curso (ZIP con 2 CSVs + 1 Excel formato CURSO INTENSIVO con 3 hojas) ---
 router.get('/downloads/curso', async (req: AuthenticatedRequest, res: Response) => {
   const cohortId = req.query.cohortId as string | undefined;
   if (!cohortId) {
@@ -1130,11 +1134,9 @@ router.get('/downloads/curso', async (req: AuthenticatedRequest, res: Response) 
   }
   try {
     const data = await downloadsService.getCourseExportData(cohortId);
-    const csvAnexo2 = downloadsService.buildCsvAnexo2(data);
-    const csvAnexo4 = downloadsService.buildCsvAnexo4(data);
-    const csvListado = downloadsService.buildCsvListado(data);
     const csvCompraPermisos = downloadsService.buildCsvCompraPermisos(data);
     const csvLegalizacion = downloadsService.buildCsvLegalizacionPermisos(data);
+    const xlsxCursoIntensivo = await downloadsService.buildXlsxCursoIntensivo(data);
 
     const suffix = downloadsService.getCourseFileSuffix(data.cohort.code);
     const zipName = `Reporte_curso_${suffix}_${new Date().toISOString().slice(0, 10)}.zip`;
@@ -1148,11 +1150,9 @@ router.get('/downloads/curso', async (req: AuthenticatedRequest, res: Response) 
     });
     archive.pipe(res);
 
-    archive.append(Buffer.from(csvAnexo2, 'utf8'), { name: `ANEXO_2_Permiso_Aprendizaje_${suffix}.csv` });
-    archive.append(Buffer.from(csvAnexo4, 'utf8'), { name: `ANEXO_4_Titulo_Conductor_${suffix}.csv` });
-    archive.append(Buffer.from(csvListado, 'utf8'), { name: `Listado_Excel_${suffix}.csv` });
     archive.append(Buffer.from(csvCompraPermisos, 'utf8'), { name: `Compra_Permisos_${suffix}.csv` });
     archive.append(Buffer.from(csvLegalizacion, 'utf8'), { name: `Legalizacion_Permisos_${suffix}.csv` });
+    archive.append(xlsxCursoIntensivo, { name: `CURSO_INTENSIVO_${suffix}.xlsx` });
 
     await archive.finalize();
   } catch (e) {

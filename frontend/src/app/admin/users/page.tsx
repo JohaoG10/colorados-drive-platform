@@ -18,6 +18,7 @@ interface UserRow {
   course_id: string | null;
   cohort_id: string | null;
   cedula: string | null;
+  gender?: string | null;
   citizenship: string | null;
   blood_type: string | null;
   schedule_id: string | null;
@@ -59,14 +60,14 @@ export default function AdminUsersPage() {
   const [editAvailableSlots, setEditAvailableSlots] = useState<{ day_of_week: number; start_time: string }[]>([]);
   const [filterCohortId, setFilterCohortId] = useState('');
   const [form, setForm] = useState<{
-    email: string; password: string; fullName: string; cedula: string; citizenship: string; bloodType: string;
+    email: string; password: string; fullName: string; cedula: string; gender: string; citizenship: string; bloodType: string;
     birthDate: string; address: string; phone: string; startDate: string; endDate: string; modality: string;
     practiceStartDate: string; practiceEndDate: string;
     role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string;
     scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string; practiceWeeks: 1 | 2 | 3 | '';
     paymentType: 'full' | 'partial'; initialPaymentAmount: string;
   }>({
-    email: '', password: '', fullName: '', cedula: '', citizenship: '', bloodType: '',
+    email: '', password: '', fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '',
     birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '',
     practiceStartDate: '', practiceEndDate: '',
     role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '',
@@ -87,8 +88,8 @@ export default function AdminUsersPage() {
   const [activityModal, setActivityModal] = useState<{ userId: string; name: string } | null>(null);
   const [activity, setActivity] = useState<{ last_active_at: string | null; total_time_seconds: number } | null>(null);
   const [editModal, setEditModal] = useState<UserRow | null>(null);
-  const [editForm, setEditForm] = useState<{ fullName: string; cedula: string; citizenship: string; bloodType: string; role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string; scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string; practiceWeeks: 1 | 2 | 3 | ''; practiceStartDate: string; practiceEndDate: string; password: string }>({
-    fullName: '', cedula: '', citizenship: '', bloodType: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', practiceStartDate: '', practiceEndDate: '', password: '',
+  const [editForm, setEditForm] = useState<{ fullName: string; cedula: string; gender: string; citizenship: string; bloodType: string; role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string; scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string; practiceWeeks: 1 | 2 | 3 | ''; practiceStartDate: string; practiceEndDate: string; password: string }>({
+    fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', practiceStartDate: '', practiceEndDate: '', password: '',
   });
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
@@ -225,6 +226,7 @@ export default function AdminUsersPage() {
         password: form.password,
         fullName: form.fullName,
         cedula: form.cedula.trim() || null,
+        gender: form.gender === 'masculino' || form.gender === 'femenino' ? form.gender : null,
         citizenship: form.citizenship.trim() || null,
         bloodType: form.bloodType || null,
         birthDate: form.role === 'student' ? (form.birthDate.trim() || null) : null,
@@ -258,7 +260,7 @@ export default function AdminUsersPage() {
         throw new Error(msg);
       }
       setSuccess('Usuario creado');
-      setForm({ email: '', password: '', fullName: '', cedula: '', citizenship: '', bloodType: '', birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '', practiceStartDate: '', practiceEndDate: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', paymentType: 'partial', initialPaymentAmount: '' });
+      setForm({ email: '', password: '', fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '', birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '', practiceStartDate: '', practiceEndDate: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', paymentType: 'partial', initialPaymentAmount: '' });
       setShowForm(false);
       load();
     } catch (err) {
@@ -317,6 +319,7 @@ export default function AdminUsersPage() {
     setEditForm({
       fullName: u.full_name || '',
       cedula: u.cedula || '',
+      gender: u.gender === 'masculino' || u.gender === 'femenino' ? u.gender : '',
       citizenship: u.citizenship || '',
       bloodType: u.blood_type || '',
       role: (u.role as 'admin' | 'student') || 'student',
@@ -353,11 +356,12 @@ export default function AdminUsersPage() {
       return;
     }
     try {
-      const body: { fullName?: string; role?: string; cohortId?: string | null; cedula?: string | null; instructorId?: string; dayOfWeek?: number; startTime?: string; scheduleType?: string; practiceWeeks?: number; practiceStartDate?: string | null; practiceEndDate?: string | null; citizenship?: string | null; bloodType?: string | null; password?: string } = {
+      const body: { fullName?: string; role?: string; cohortId?: string | null; cedula?: string | null; gender?: string | null; instructorId?: string; dayOfWeek?: number; startTime?: string; scheduleType?: string; practiceWeeks?: number; practiceStartDate?: string | null; practiceEndDate?: string | null; citizenship?: string | null; bloodType?: string | null; password?: string } = {
         fullName: editForm.fullName,
         role: editForm.role,
         cohortId: editForm.cohortId || null,
         cedula: editForm.cedula.trim() || null,
+        gender: editForm.gender === 'masculino' || editForm.gender === 'femenino' ? editForm.gender : null,
         instructorId: editForm.role === 'student' ? editForm.instructorId || undefined : undefined,
         dayOfWeek: editForm.role === 'student' && editForm.scheduleType === 'single' ? editForm.dayOfWeek : undefined,
         startTime: editForm.role === 'student' ? editForm.startTime || undefined : undefined,
@@ -511,6 +515,14 @@ export default function AdminUsersPage() {
                     {BLOOD_TYPES.map((b) => (
                       <option key={b} value={b}>{b}</option>
                     ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">Género</label>
+                  <select value={form.gender} onChange={(e) => setForm({ ...form, gender: e.target.value })} className="form-select">
+                    <option value="">Seleccionar</option>
+                    <option value="masculino">Masculino</option>
+                    <option value="femenino">Femenino</option>
                   </select>
                 </div>
               </div>
@@ -920,6 +932,14 @@ export default function AdminUsersPage() {
                   {BLOOD_TYPES.map((b) => (
                     <option key={b} value={b}>{b}</option>
                   ))}
+                </select>
+              </div>
+              <div>
+                <label className="form-label">Género</label>
+                <select value={editForm.gender} onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })} className="form-select">
+                  <option value="">Seleccionar</option>
+                  <option value="masculino">Masculino</option>
+                  <option value="femenino">Femenino</option>
                 </select>
               </div>
               <div>

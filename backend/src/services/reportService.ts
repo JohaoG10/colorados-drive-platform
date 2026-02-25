@@ -5,6 +5,7 @@ export interface CohortReportStudent {
   email: string;
   fullName: string;
   cedula: string | null;
+  gender: string | null;
   citizenship: string | null;
   bloodType: string | null;
   birthDate: string | null;
@@ -29,20 +30,20 @@ export async function getCohortReport(cohortId: string) {
 
   const courseRow = cohort.courses as { id?: string; name?: string; code?: string; price?: number } | null;
 
-  let studentsData: { id: string; email: string; full_name: string | null; cedula?: string | null; citizenship?: string | null; blood_type?: string | null; birth_date?: string | null; address?: string | null; phone?: string | null; start_date?: string | null; end_date?: string | null; modality?: string | null }[] | null = null;
+  let studentsData: { id: string; email: string; full_name: string | null; cedula?: string | null; gender?: string | null; citizenship?: string | null; blood_type?: string | null; birth_date?: string | null; address?: string | null; phone?: string | null; start_date?: string | null; end_date?: string | null; modality?: string | null }[] | null = null;
   const fullSelect = await supabaseAdmin
     .from('user_profiles')
-    .select('id, email, full_name, cedula, citizenship, blood_type, birth_date, address, phone, start_date, end_date, modality')
+    .select('id, email, full_name, cedula, gender, citizenship, blood_type, birth_date, address, phone, start_date, end_date, modality')
     .eq('cohort_id', cohortId)
     .eq('role', 'student');
-  if (fullSelect.error && /birth_date|address|phone|start_date|end_date|modality|schema|does not exist/i.test(fullSelect.error.message)) {
+  if (fullSelect.error && /birth_date|address|phone|start_date|end_date|modality|gender|schema|does not exist/i.test(fullSelect.error.message)) {
     const fallback = await supabaseAdmin
       .from('user_profiles')
       .select('id, email, full_name, cedula, citizenship, blood_type')
       .eq('cohort_id', cohortId)
       .eq('role', 'student');
     if (fallback.error) throw new Error(fallback.error.message);
-    studentsData = (fallback.data || []).map((s) => ({ ...s, birth_date: null, address: null, phone: null, start_date: null, end_date: null, modality: null }));
+    studentsData = (fallback.data || []).map((s) => ({ ...s, gender: null, birth_date: null, address: null, phone: null, start_date: null, end_date: null, modality: null }));
   } else {
     if (fullSelect.error) throw new Error(fullSelect.error.message);
     studentsData = fullSelect.data;
@@ -85,6 +86,7 @@ export async function getCohortReport(cohortId: string) {
       email: s.email,
       fullName: s.full_name || '',
       cedula: s.cedula ?? null,
+      gender: s.gender ?? null,
       citizenship: s.citizenship ?? null,
       bloodType: s.blood_type ?? null,
       birthDate: s.birth_date ?? null,

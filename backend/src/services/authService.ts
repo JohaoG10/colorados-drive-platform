@@ -72,6 +72,7 @@ export async function createUser(params: {
   practiceWeeks?: 1 | 2 | 3 | null;
   practiceStartDate?: string | null;
   practiceEndDate?: string | null;
+  gender?: string | null;
   citizenship?: string | null;
   bloodType?: string | null;
   birthDate?: string | null;
@@ -180,6 +181,7 @@ export async function createUser(params: {
     cohort_id: cohortId,
     cedula: params.cedula?.trim() || null,
     schedule_id: scheduleId,
+    gender: params.gender === 'masculino' || params.gender === 'femenino' ? params.gender : null,
     citizenship: params.citizenship?.trim() || null,
     blood_type: params.bloodType?.trim() || null,
     birth_date: params.birthDate?.trim() || null,
@@ -198,10 +200,11 @@ export async function createUser(params: {
 
   const { error: profileError } = await supabaseAdmin.from('user_profiles').insert(profileRow);
   if (profileError) {
-    if (/practice_weeks|practice_start_date|practice_end_date|column.*does not exist/i.test(profileError.message)) {
+    if (/practice_weeks|practice_start_date|practice_end_date|gender|column.*does not exist/i.test(profileError.message)) {
       delete profileRow.practice_weeks;
       delete profileRow.practice_start_date;
       delete profileRow.practice_end_date;
+      delete profileRow.gender;
       const { error: retryError } = await supabaseAdmin.from('user_profiles').insert(profileRow);
       if (retryError) {
         await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
@@ -270,6 +273,7 @@ export async function updateUserProfile(
     modality?: string | null;
     practiceStartDate?: string | null;
     practiceEndDate?: string | null;
+    gender?: string | null;
     password?: string;
   }
 ): Promise<{ error?: string }> {
@@ -307,6 +311,9 @@ export async function updateUserProfile(
   }
   if (params.cedula !== undefined) {
     update.cedula = params.cedula?.trim() || null;
+  }
+  if (params.gender !== undefined) {
+    update.gender = params.gender === 'masculino' || params.gender === 'femenino' ? params.gender : null;
   }
   if (params.scheduleId !== undefined) {
     update.schedule_id = params.scheduleId ?? null;
