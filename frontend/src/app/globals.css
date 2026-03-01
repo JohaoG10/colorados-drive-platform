@@ -153,10 +153,23 @@ body {
   overflow: hidden;
 }
 
+/* Scroll horizontal en móvil para tablas anchas */
+.table-wrap .overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
 .table-pro {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
+}
+
+@media (max-width: 640px) {
+  .table-pro th,
+  .table-pro td {
+    padding: 0.75rem 1rem;
+    font-size: 0.8125rem;
+  }
 }
 
 .table-pro thead {
@@ -266,6 +279,22 @@ body {
 .btn-secondary:hover {
   background: #fafafa;
   border-color: #d4d4d4;
+}
+
+/* Touch-friendly: área mínima de toque 44px en móvil */
+@media (max-width: 768px) {
+  .btn-primary,
+  .btn-secondary {
+    min-height: 44px;
+    padding: 0.75rem 1.25rem;
+  }
+}
+
+/* Contenedor principal con safe-area para dispositivos con notch */
+@supports (padding: env(safe-area-inset-bottom)) {
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }
 
 /* Road stripes accent - rayas de carretera */

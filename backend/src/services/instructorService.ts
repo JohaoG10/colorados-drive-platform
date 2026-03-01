@@ -40,6 +40,7 @@ export async function createInstructor(params: {
   email?: string | null;
   phone?: string | null;
   isActive?: boolean;
+  password?: string | null;
 }) {
   const { data, error } = await supabaseAdmin
     .from('instructors')
@@ -53,12 +54,27 @@ export async function createInstructor(params: {
     .select()
     .single();
   if (error) throw new Error(error.message);
-  return data as InstructorRow;
+  const instructor = data as InstructorRow;
+
+  const email = params.email?.trim();
+  const password = params.password?.trim();
+  if (email && password && password.length >= 6) {
+    const { createInstructorWithLogin } = await import('./authService');
+    const result = await createInstructorWithLogin({
+      instructorId: instructor.id,
+      email,
+      password,
+      fullName: params.fullName,
+    });
+    if (result.error) throw new Error(result.error);
+  }
+
+  return instructor;
 }
 
 export async function updateInstructor(
   id: string,
-  params: { fullName?: string; email?: string | null; phone?: string | null; isActive?: boolean }
+  params: { fullName?: string; email?: string | null; phone?: string | null; isActive?: boolean; password?: string | null }
 ) {
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (params.fullName !== undefined) update.full_name = params.fullName;
@@ -73,10 +89,29 @@ export async function updateInstructor(
     .select()
     .single();
   if (error) throw new Error(error.message);
+
+  if (params.password !== undefined && params.password && params.password.trim().length >= 6) {
+    const { updateInstructorPassword } = await import('./authService');
+    const result = await updateInstructorPassword(id, params.password.trim());
+    if (result.error) throw new Error(result.error);
+  }
+
   return data as InstructorRow;
 }
 
 export async function deleteInstructor(id: string) {
+  const { data: profile } = await supabaseAdmin
+    .from('user_profiles')
+    .select('id')
+    .eq('instructor_id', id)
+    .eq('role', 'instructor')
+    .maybeSingle();
+
+  if (profile) {
+    const { deleteUser } = await import('./authService');
+    await deleteUser((profile as { id: string }).id);
+  }
+
   const { error } = await supabaseAdmin.from('instructors').delete().eq('id', id);
   if (error) throw new Error(error.message);
 }

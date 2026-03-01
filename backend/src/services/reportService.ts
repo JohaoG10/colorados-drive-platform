@@ -19,10 +19,22 @@ export interface CohortReportStudent {
   lastActiveAt: string | null;
 }
 
-export async function getCohortReport(cohortId: string) {
+export interface CohortReportCohort {
+  id: string;
+  name: string;
+  code: string;
+  courseId?: string;
+  courseName?: string;
+  courseCode?: string;
+  coursePrice?: number | null;
+  startDate: string | null;
+  endDate: string | null;
+}
+
+export async function getCohortReport(cohortId: string): Promise<{ cohort: CohortReportCohort; students: CohortReportStudent[] }> {
   const { data: cohort, error: cohortErr } = await supabaseAdmin
     .from('cohorts')
-    .select('id, name, code, course_id, courses(id, name, code, price)')
+    .select('id, name, code, course_id, start_date, end_date, courses(id, name, code, price)')
     .eq('id', cohortId)
     .single();
 
@@ -117,6 +129,8 @@ export async function getCohortReport(cohortId: string) {
       courseName: courseRow?.name,
       courseCode: courseRow?.code,
       coursePrice: courseRow?.price != null ? Number(courseRow.price) : null,
+      startDate: cohort.start_date ? String(cohort.start_date).slice(0, 10) : null,
+      endDate: cohort.end_date ? String(cohort.end_date).slice(0, 10) : null,
     },
     students: report,
   };

@@ -55,7 +55,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('colorados_token', data.accessToken);
     setToken(data.accessToken);
     setUser(data.user);
-    router.push(data.user.role === 'admin' ? '/admin' : '/student');
+    const dest = data.user.role === 'admin' ? '/admin' : data.user.role === 'instructor' ? '/instructor' : '/student';
+    router.push(dest);
   };
 
   const logout = () => {

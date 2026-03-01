@@ -109,7 +109,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       return;
     }
     if (user.role !== 'admin') {
-      router.replace('/student');
+      router.replace(user.role === 'instructor' ? '/instructor' : '/student');
     }
   }, [user, loading, router]);
 

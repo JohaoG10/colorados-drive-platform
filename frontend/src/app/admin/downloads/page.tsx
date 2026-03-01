@@ -12,6 +12,8 @@ interface Cohort {
   code: string;
   course_id: string;
   courses?: { name: string };
+  start_date?: string | null;
+  end_date?: string | null;
 }
 
 export default function AdminDownloadsPage() {
@@ -143,6 +145,11 @@ export default function AdminDownloadsPage() {
         {selectedCohort && (
           <p className="pt-2 text-neutral-400">
             Curso seleccionado: <span className="text-neutral-300">{selectedCohort.name}</span> ({selectedCohort.code})
+            {(selectedCohort.start_date || selectedCohort.end_date) && (
+              <span className="block mt-1 text-neutral-500 text-xs">
+                Inicio: {selectedCohort.start_date ? formatDate(selectedCohort.start_date) : '—'} · Término: {selectedCohort.end_date ? formatDate(selectedCohort.end_date) : '—'}
+              </span>
+            )}
           </p>
         )}
       </div>
@@ -156,4 +163,13 @@ function DownloadIcon() {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
     </svg>
   );
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
 }

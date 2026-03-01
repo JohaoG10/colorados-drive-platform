@@ -78,7 +78,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
       return;
     }
     if (user.role !== 'student') {
-      router.replace('/admin');
+      router.replace(user.role === 'instructor' ? '/instructor' : '/admin');
     }
   }, [user, loading, router]);
 

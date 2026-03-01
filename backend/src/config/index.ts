@@ -35,6 +35,10 @@ const DEV_DEFAULT_ORIGINS = [
   'http://127.0.0.1:3000',
   'http://localhost:3001',
   'http://127.0.0.1:3001',
+  'http://localhost:3002',
+  'http://127.0.0.1:3002',
+  'http://localhost:3003',
+  'http://127.0.0.1:3003',
 ];
 
 /**
@@ -44,7 +48,12 @@ export function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin || typeof origin !== 'string') return false;
   const isDev = process.env.NODE_ENV !== 'production';
   const hasConfig = CORS_EXACT_ORIGINS.size > 0 || CORS_PATTERNS.length > 0;
-  if (isDev && !hasConfig) return DEV_DEFAULT_ORIGINS.includes(origin);
+  if (isDev && !hasConfig) {
+    if (DEV_DEFAULT_ORIGINS.includes(origin)) return true;
+    // En desarrollo permitir cualquier puerto de localhost
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+    return false;
+  }
   if (CORS_EXACT_ORIGINS.has(origin)) return true;
   return CORS_PATTERNS.some((re) => re.test(origin));
 }

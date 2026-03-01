@@ -11,6 +11,7 @@ export interface LoginResult {
     fullName: string;
     role: string;
     courseId: string | null;
+    instructorId?: string | null;
   };
 }
 
@@ -25,11 +26,15 @@ export async function login(email: string, password: string): Promise<LoginResul
     return null;
   }
 
-  const { data: profile } = await supabaseAdmin
+  const { data: profile, error: profileError } = await supabaseAdmin
     .from('user_profiles')
-    .select('id, email, full_name, role, course_id, cohort_id, cohorts(course_id)')
+    .select('id, email, full_name, role, course_id, cohort_id, instructor_id, cohorts(course_id)')
     .eq('id', data.user.id)
     .single();
+
+  if (profileError) {
+    throw new Error(`Perfil: ${profileError.message}`);
+  }
 
   if (!profile) {
     return null;
@@ -38,6 +43,8 @@ export async function login(email: string, password: string): Promise<LoginResul
   const courseId = profile.course_id
     ?? (profile.cohorts as { course_id?: string } | null)?.course_id
     ?? null;
+
+  const instructorId = (profile as { instructor_id?: string | null }).instructor_id ?? null;
 
   return {
     accessToken: data.session.access_token,
@@ -48,8 +55,71 @@ export async function login(email: string, password: string): Promise<LoginResul
       fullName: profile.full_name || '',
       role: profile.role,
       courseId,
+      instructorId,
     },
   };
+}
+
+/**
+ * Crea usuario de acceso (auth + user_profiles) para un instructor existente.
+ * Permite al instructor iniciar sesión y ver solo el cuadro semanal.
+ */
+export async function createInstructorWithLogin(params: {
+  instructorId: string;
+  email: string;
+  password: string;
+  fullName: string;
+}): Promise<{ userId: string; error?: string }> {
+  const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+    email: params.email,
+    password: params.password,
+    email_confirm: true,
+    user_metadata: { full_name: params.fullName },
+  });
+
+  if (authError || !authData.user) {
+    return { userId: '', error: authError?.message || 'Error al crear usuario' };
+  }
+
+  const { error: profileError } = await supabaseAdmin.from('user_profiles').insert({
+    id: authData.user.id,
+    email: params.email,
+    full_name: params.fullName,
+    role: 'instructor',
+    instructor_id: params.instructorId,
+  });
+
+  if (profileError) {
+    await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+    return { userId: '', error: profileError.message };
+  }
+
+  return { userId: authData.user.id };
+}
+
+/**
+ * Actualiza la contraseña del usuario asociado a un instructor (por instructor_id).
+ */
+export async function updateInstructorPassword(
+  instructorId: string,
+  newPassword: string
+): Promise<{ error?: string }> {
+  const { data: profile } = await supabaseAdmin
+    .from('user_profiles')
+    .select('id')
+    .eq('instructor_id', instructorId)
+    .eq('role', 'instructor')
+    .maybeSingle();
+
+  if (!profile) {
+    return { error: 'No existe cuenta de acceso para este instructor' };
+  }
+
+  const { error } = await supabaseAdmin.auth.admin.updateUserById((profile as { id: string }).id, {
+    password: newPassword,
+  });
+  if (error) return { error: error.message };
+  return {};
 }
 
 /**
@@ -100,16 +170,27 @@ export async function createUser(params: {
 
   let courseId: string | null = null;
   let cohortId: string | null = null;
+  let cohortStartDate: string | null = null;
+  let cohortEndDate: string | null = null;
   if (params.role === 'student') {
     if (params.cohortId) {
       cohortId = params.cohortId;
-      const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id').eq('id', params.cohortId).single();
+      const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id, start_date, end_date').eq('id', params.cohortId).single();
       courseId = cohort?.course_id ?? null;
+      if (cohort) {
+        cohortStartDate = cohort.start_date ? String(cohort.start_date).slice(0, 10) : null;
+        cohortEndDate = cohort.end_date ? String(cohort.end_date).slice(0, 10) : null;
+      }
     } else if (params.courseId && params.courseNumber) {
       const { getOrCreateCohort } = await import('./adminService');
       const cohort = await getOrCreateCohort(params.courseId, params.courseNumber);
       cohortId = cohort.id;
       courseId = cohort.course_id;
+      const { data: co } = await supabaseAdmin.from('cohorts').select('start_date, end_date').eq('id', cohort.id).single();
+      if (co) {
+        cohortStartDate = co.start_date ? String(co.start_date).slice(0, 10) : null;
+        cohortEndDate = co.end_date ? String(co.end_date).slice(0, 10) : null;
+      }
     } else {
       courseId = params.courseId ?? null;
     }
@@ -187,8 +268,8 @@ export async function createUser(params: {
     birth_date: params.birthDate?.trim() || null,
     address: params.address?.trim() || null,
     phone: params.phone?.trim() || null,
-    start_date: params.startDate?.trim() || null,
-    end_date: params.endDate?.trim() || null,
+    start_date: (params.startDate?.trim() || cohortStartDate) || null,
+    end_date: (params.endDate?.trim() || cohortEndDate) || null,
     modality: params.modality?.trim() || null,
     total_amount: totalAmount,
     amount_paid: amountPaid,
@@ -300,9 +381,13 @@ export async function updateUserProfile(
       update.schedule_id = null;
     } else if (params.role === 'student' && (params.courseId !== undefined || params.cohortId !== undefined)) {
       if (params.cohortId) {
-        const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id').eq('id', params.cohortId).single();
+        const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id, start_date, end_date').eq('id', params.cohortId).single();
         update.course_id = cohort?.course_id ?? null;
         update.cohort_id = params.cohortId;
+        if (cohort && params.startDate === undefined && params.endDate === undefined) {
+          update.start_date = cohort.start_date ? String(cohort.start_date).slice(0, 10) : null;
+          update.end_date = cohort.end_date ? String(cohort.end_date).slice(0, 10) : null;
+        }
       } else {
         update.course_id = params.courseId ?? null;
         update.cohort_id = null;
@@ -372,17 +457,27 @@ export async function updateUserProfile(
   if (params.practiceEndDate !== undefined) update.practice_end_date = params.practiceEndDate?.trim() || null;
   if (params.courseId !== undefined || params.cohortId !== undefined || params.courseNumber !== undefined) {
     if (params.cohortId) {
-      const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id').eq('id', params.cohortId).single();
+      const { data: cohort } = await supabaseAdmin.from('cohorts').select('course_id, start_date, end_date').eq('id', params.cohortId).single();
       update.course_id = cohort?.course_id ?? null;
       update.cohort_id = params.cohortId;
+      if (cohort && params.startDate === undefined && params.endDate === undefined) {
+        update.start_date = cohort.start_date ? String(cohort.start_date).slice(0, 10) : null;
+        update.end_date = cohort.end_date ? String(cohort.end_date).slice(0, 10) : null;
+      }
     } else if (params.courseId && params.courseNumber && String(params.courseNumber).trim()) {
       const { getOrCreateCohort } = await import('./adminService');
       const cohort = await getOrCreateCohort(params.courseId, String(params.courseNumber).trim());
       update.course_id = cohort.course_id;
       update.cohort_id = cohort.id;
+      const { data: co } = await supabaseAdmin.from('cohorts').select('start_date, end_date').eq('id', cohort.id).single();
+      if (co && params.startDate === undefined && params.endDate === undefined) {
+        update.start_date = co.start_date ? String(co.start_date).slice(0, 10) : null;
+        update.end_date = co.end_date ? String(co.end_date).slice(0, 10) : null;
+      }
     } else {
       update.course_id = params.courseId ?? null;
       update.cohort_id = null;
+      update.schedule_id = null;
     }
   }
 

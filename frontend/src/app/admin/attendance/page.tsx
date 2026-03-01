@@ -149,10 +149,10 @@ export default function AdminAttendancePage() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
+      <div className="rounded-2xl border border-neutral-200 bg-white p-4 sm:p-6 shadow-sm">
         <h2 className="font-semibold text-neutral-900 mb-4">Filtros</h2>
         <div className="flex flex-wrap items-end gap-4">
-          <div className="min-w-[220px]">
+          <div className="w-full sm:min-w-[220px] sm:w-auto">
             <label className="block text-sm font-medium text-neutral-700 mb-1">Curso (número de curso)</label>
             <select
               value={cohortId}
@@ -165,28 +165,28 @@ export default function AdminAttendancePage() {
               ))}
             </select>
           </div>
-          <div>
+          <div className="w-full sm:w-auto">
             <label className="block text-sm font-medium text-neutral-700 mb-1">Desde</label>
             <input
               type="date"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
-              className="rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20"
+              className="w-full sm:w-auto rounded-xl border border-neutral-200 px-4 py-2.5 min-h-[44px] text-neutral-900 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20"
             />
           </div>
-          <div>
+          <div className="w-full sm:w-auto">
             <label className="block text-sm font-medium text-neutral-700 mb-1">Hasta</label>
             <input
               type="date"
               value={endDate}
               onChange={(e) => setEndDate(e.target.value)}
-              className="rounded-xl border border-neutral-200 px-4 py-2.5 text-neutral-900 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20"
+              className="w-full sm:w-auto rounded-xl border border-neutral-200 px-4 py-2.5 min-h-[44px] text-neutral-900 focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20"
             />
           </div>
           <button
             type="button"
             onClick={loadAttendance}
-            className="px-5 py-2.5 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 transition-colors"
+            className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 transition-colors"
           >
             Actualizar
           </button>
@@ -256,13 +256,13 @@ export default function AdminAttendancePage() {
       </div>
 
       {editStudent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !saving && setEditStudent(null)}>
-          <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="px-6 py-4 border-b border-neutral-100 flex justify-between items-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto" onClick={() => !saving && setEditStudent(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] my-auto overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-4 sm:px-6 py-4 border-b border-neutral-100 flex justify-between items-center shrink-0">
               <h3 className="font-semibold text-neutral-900">Asistencia: {editStudent.fullName || editStudent.email}</h3>
               <button type="button" onClick={() => !saving && setEditStudent(null)} className="text-neutral-500 hover:text-neutral-700 p-1">✕</button>
             </div>
-            <div className="p-6 overflow-auto flex-1">
+            <div className="p-4 sm:p-6 overflow-auto flex-1 min-h-0">
               <p className="text-sm text-neutral-500 mb-4">
                 Periodo: {startDate} a {endDate}. Marca cada día como Presente, Ausente o Justificado.
               </p>
@@ -285,21 +285,21 @@ export default function AdminAttendancePage() {
                 ))}
               </div>
             </div>
-            <div className="px-6 py-4 border-t border-neutral-100 flex gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => !saving && setEditStudent(null)}
-                className="px-4 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50"
-              >
-                Cancelar
-              </button>
+            <div className="px-4 sm:px-6 py-4 border-t border-neutral-100 flex flex-col-reverse sm:flex-row gap-2 justify-end shrink-0">
               <button
                 type="button"
                 onClick={saveAttendance}
                 disabled={saving}
-                className="px-4 py-2.5 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-50"
+                className="min-h-[44px] px-4 py-2.5 rounded-xl bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-50"
               >
                 {saving ? 'Guardando...' : 'Guardar'}
+              </button>
+              <button
+                type="button"
+                onClick={() => !saving && setEditStudent(null)}
+                className="min-h-[44px] px-4 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50"
+              >
+                Cancelar
               </button>
             </div>
           </div>

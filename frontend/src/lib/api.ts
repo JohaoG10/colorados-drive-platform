@@ -4,8 +4,9 @@ export interface User {
   id: string;
   email: string;
   fullName: string;
-  role: 'admin' | 'student';
+  role: 'admin' | 'student' | 'instructor';
   courseId: string | null;
+  instructorId?: string | null;
 }
 
 export interface LoginResponse {
@@ -20,11 +21,12 @@ export async function login(email: string, password: string): Promise<LoginRespo
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
+  const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Login failed');
+    const msg = typeof body?.error === 'string' ? body.error : 'Error al iniciar sesión';
+    throw new Error(msg);
   }
-  return res.json();
+  return body;
 }
 
 export async function getMe(token: string): Promise<User> {

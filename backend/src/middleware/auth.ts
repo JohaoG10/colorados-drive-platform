@@ -35,7 +35,7 @@ export async function authMiddleware(
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('user_profiles')
-      .select('id, email, full_name, role, course_id, cohort_id, cohorts(course_id)')
+      .select('id, email, full_name, role, course_id, cohort_id, instructor_id, cohorts(course_id)')
       .eq('id', userId)
       .single();
 
@@ -56,6 +56,7 @@ export async function authMiddleware(
       role: profile.role as AuthUser['role'],
       courseId,
       cohortId,
+      instructorId: (profile as { instructor_id?: string | null }).instructor_id ?? null,
     };
     next();
   } catch {

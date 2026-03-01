@@ -10,6 +10,10 @@ Estas migraciones deben ejecutarse **en el SQL Editor de Supabase** (Dashboard �
 4. `012_attendance.sql` — tabla de asistencia (días presente/ausente/justificado por estudiante)  
 5. `013_instructor_delete_set_null.sql` — al eliminar un instructor, los horarios (course_schedules) quedan sin asignar en lugar de bloquear el delete  
 6. `014_schedule_groups_and_practice_weeks.sql` — horarios semanales (Lunes a Viernes / Fines de semana), duración de práctica (1–3 semanas) y cambios por día o resto del curso. Crea: schedule_groups, course_schedules.schedule_group_id, user_profiles.practice_weeks, user_schedule_day_override.
+7. `015_practice_start_end_dates.sql` — fechas de práctica por estudiante.
+8. `016_user_gender.sql` — género en user_profiles.
+9. `017_instructor_login.sql` — login para instructores.
+10. `018_cohort_start_end_dates.sql` — fechas de inicio y término del curso a nivel de número de curso (cohort); al inscribir un estudiante se copian a su perfil.
 
 ## Cómo aplicar la migración 010 (precio y pagos)
 

@@ -225,9 +225,9 @@ export default function StudentCoursePage() {
             </div>
             <ul className="divide-y divide-neutral-100">
               {recentResults.map((r, i) => (
-                <li key={i} className="px-6 py-4 flex items-center justify-between">
-                  <span className="font-medium text-neutral-900">{r.examTitle ?? 'Examen'}</span>
-                  <div className="flex items-center gap-3">
+                <li key={i} className="px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <span className="font-medium text-neutral-900 truncate">{r.examTitle ?? 'Examen'}</span>
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                     <span className="text-sm font-semibold">{r.score?.toFixed(0)}%</span>
                     <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${r.passed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                       {r.passed ? 'Aprobado' : 'Reprobado'}

@@ -271,14 +271,14 @@ export default function ReportesPorCursoPage() {
               {filteredCohorts.map((c) => (
                 <li
                   key={c.id}
-                  className={`px-6 py-4 flex justify-between items-center gap-3 cursor-pointer hover:bg-neutral-50 ${selectedCohort?.id === c.id ? 'bg-red-50' : ''}`}
+                  className={`px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 cursor-pointer hover:bg-neutral-50 ${selectedCohort?.id === c.id ? 'bg-red-50' : ''}`}
                   onClick={() => setSelectedCohort(selectedCohort?.id === c.id ? null : c)}
                 >
                   <p className="font-medium min-w-0">{c.courses?.name || 'Curso'} Nro {c.name}</p>
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setDeleteWithUsersModal(c); }}
-                    className="shrink-0 px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors"
+                    className="shrink-0 min-h-[44px] px-3 py-2 sm:py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors w-full sm:w-auto"
                     title="Eliminar este curso y todos sus usuarios (descarga el CSV antes)"
                   >
                     Eliminar curso y usuarios
@@ -360,30 +360,30 @@ export default function ReportesPorCursoPage() {
       </div>
 
       {deleteWithUsersModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !deleteWithUsersLoading && setDeleteWithUsersModal(null)}>
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={() => !deleteWithUsersLoading && setDeleteWithUsersModal(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-4 sm:p-6 my-auto max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="font-semibold text-neutral-900 mb-2">Eliminar curso y todos los usuarios</h3>
             <p className="text-neutral-600 text-sm mb-4">
               Se eliminará <strong>{deleteWithUsersModal.courses?.name || 'Curso'} Nro {deleteWithUsersModal.name}</strong> y todos los usuarios asignados
               {selectedCohort?.id === deleteWithUsersModal.id && report?.students != null ? ` (${report.students.length} estudiantes).` : '.'}
               {' '}Sus datos (exámenes, intentos, actividad) se borrarán. Asegúrate de haber descargado el reporte CSV. Esta acción no se puede deshacer.
             </p>
-            <div className="flex gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => setDeleteWithUsersModal(null)}
-                disabled={deleteWithUsersLoading}
-                className="px-4 py-2 rounded-xl border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50"
-              >
-                Cancelar
-              </button>
+            <div className="flex flex-col-reverse sm:flex-row gap-2 justify-end">
               <button
                 type="button"
                 onClick={deleteCohortWithUsers}
                 disabled={deleteWithUsersLoading}
-                className="px-4 py-2 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50"
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50"
               >
                 {deleteWithUsersLoading ? 'Eliminando...' : 'Sí, eliminar todo'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteWithUsersModal(null)}
+                disabled={deleteWithUsersLoading}
+                className="min-h-[44px] px-4 py-2 rounded-xl border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50"
+              >
+                Cancelar
               </button>
             </div>
           </div>

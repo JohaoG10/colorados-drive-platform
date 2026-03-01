@@ -370,7 +370,7 @@ export default function AdminSchedulesPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-slate-200">
+      <div className="flex gap-2 border-b border-slate-200 overflow-x-auto">
         <button
           type="button"
           onClick={() => setTab('by-course')}
@@ -545,7 +545,7 @@ export default function AdminSchedulesPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500">Filtros</h3>
         <div className="flex flex-wrap items-end gap-4">
-          <div className="min-w-[200px]">
+          <div className="w-full sm:min-w-[200px] sm:w-auto">
             <label className="mb-1.5 block text-sm font-medium text-slate-700">Curso</label>
             <select
               value={filterCohortId}
@@ -560,7 +560,7 @@ export default function AdminSchedulesPage() {
               ))}
             </select>
           </div>
-          <div className="min-w-[200px]">
+          <div className="w-full sm:min-w-[200px] sm:w-auto">
             <label className="mb-1.5 block text-sm font-medium text-slate-700">Instructor</label>
             <select
               value={filterInstructorId}
@@ -577,7 +577,7 @@ export default function AdminSchedulesPage() {
             <button
               type="button"
               onClick={() => { setFilterCohortId(''); setFilterInstructorId(''); }}
-              className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
+              className="w-full sm:w-auto min-h-[44px] sm:min-h-0 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
             >
               Limpiar filtros
             </button>
@@ -686,7 +686,7 @@ export default function AdminSchedulesPage() {
                 </button>
               </div>
             </div>
-            <div className="max-h-[50vh] overflow-auto p-6">
+            <div className="max-h-[70vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
               {studentsLoading ? (
                 <div className="flex justify-center py-8">
                   <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
@@ -734,14 +734,14 @@ onClick={() => { setStudentsModal(null); setStudentsModalTimeLabel(null); }}
 
       {/* Modal Cambiar horario */}
       {changeScheduleStudent && studentsModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setChangeScheduleStudent(null)}>
-          <div className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="border-b border-slate-100 bg-slate-50/80 px-6 py-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm overflow-y-auto" onClick={() => setChangeScheduleStudent(null)}>
+          <div className="w-full max-w-md my-auto overflow-hidden rounded-2xl bg-white shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-slate-100 bg-slate-50/80 px-4 sm:px-6 py-4 shrink-0">
               <h3 className="text-lg font-semibold text-slate-900">Cambiar horario</h3>
               <p className="text-sm text-slate-600 mt-0.5">{changeScheduleStudent.full_name}</p>
               <p className="text-xs text-slate-500">Curso: {getCohortLabel(studentsModal)}</p>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-4 sm:px-6 space-y-4 overflow-y-auto flex-1 min-h-0">
               {changeScheduleError && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{changeScheduleError}</div>
               )}
@@ -787,19 +787,19 @@ onClick={() => { setStudentsModal(null); setStudentsModalTimeLabel(null); }}
                 )}
               </div>
             </div>
-            <div className="flex gap-2 border-t border-slate-100 px-6 py-4">
+            <div className="flex flex-col-reverse sm:flex-row gap-2 border-t border-slate-100 px-4 sm:px-6 py-4 shrink-0">
               <button
                 type="button"
                 onClick={submitChangeSchedule}
                 disabled={!changeSlot || changeScheduleSubmitting}
-                className="flex-1 rounded-xl bg-teal-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-700 disabled:opacity-50 disabled:pointer-events-none"
+                className="flex-1 min-h-[44px] rounded-xl bg-teal-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-700 disabled:opacity-50 disabled:pointer-events-none"
               >
                 {changeScheduleSubmitting ? 'Guardando...' : 'Guardar'}
               </button>
               <button
                 type="button"
                 onClick={() => setChangeScheduleStudent(null)}
-                className="rounded-xl border border-slate-200 py-2.5 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="min-h-[44px] rounded-xl border border-slate-200 py-2.5 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Cancelar
               </button>

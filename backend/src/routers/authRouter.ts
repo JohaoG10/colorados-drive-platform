@@ -9,25 +9,29 @@ const router = Router();
 router.post(
   '/login',
   [
-    body('email').isEmail().normalizeEmail(),
-    body('password').notEmpty().withMessage('Password is required'),
+    body('email').isEmail().normalizeEmail().withMessage('Correo electrónico no válido'),
+    body('password').notEmpty().withMessage('La contraseña es requerida'),
   ],
   async (req: Request, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-      return;
+      const firstMsg = errors.array()[0]?.msg || 'Revisa los datos';
+      return res.status(400).json({ error: firstMsg });
     }
 
     const { email, password } = req.body;
-    const result = await login(email, password);
+    try {
+      const result = await login(email, password);
 
-    if (!result) {
-      res.status(401).json({ error: 'Invalid email or password' });
-      return;
+      if (!result) {
+        return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+      }
+
+      return res.json(result);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Error al iniciar sesión';
+      return res.status(500).json({ error: message });
     }
-
-    res.json(result);
   }
 );
 
@@ -36,13 +40,17 @@ router.get('/me', authMiddleware, (req: AuthenticatedRequest, res: Response) => 
     res.status(401).json({ error: 'Not authenticated' });
     return;
   }
-  res.json({
+  const payload: Record<string, unknown> = {
     id: req.user.id,
     email: req.user.email,
     fullName: req.user.fullName,
     role: req.user.role,
     courseId: req.user.courseId,
-  });
+  };
+  if (req.user.role === 'instructor' && req.user.instructorId) {
+    payload.instructorId = req.user.instructorId;
+  }
+  res.json(payload);
 });
 
 export default router;

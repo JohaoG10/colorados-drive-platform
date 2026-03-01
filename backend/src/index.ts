@@ -7,6 +7,7 @@ import { supabaseAdmin } from './config/supabase';
 import authRouter from './routers/authRouter';
 import adminRouter from './routers/adminRouter';
 import studentRouter from './routers/studentRouter';
+import instructorRouter from './routers/instructorRouter';
 
 const app = express();
 
@@ -27,6 +28,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use('/api/auth', authRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/student', studentRouter);
+app.use('/api/instructor', instructorRouter);
 
 /** Endpoint público para keep-alive: que un cron externo llame cada 10 min para que backend y Supabase no se duerman. */
 app.get('/health', async (_req: Request, res: Response) => {

@@ -16,6 +16,30 @@ Ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) para el diseño completo.
 - Node.js 18+
 - Cuenta en [Supabase](https://supabase.com)
 
+## Desarrollo local (dos terminales)
+
+Para que el login y la API funcionen, **necesitas dos terminales**:
+
+1. **Terminal 1 – Backend** (puerto **3001**):
+   ```bash
+   cd backend
+   npm install
+   # Crea backend/.env con SUPABASE_*, JWT_SECRET, etc.
+   npm run dev
+   ```
+   Debe aparecer: `Colorados Drive API running on port 3001`
+
+2. **Terminal 2 – Frontend** (puerto **3000**, o el que indique Next.js si 3000 está ocupado):
+   ```bash
+   cd frontend
+   npm install
+   cp env.example .env.local
+   npm run dev
+   ```
+   Abre la URL que imprima Next.js (por defecto http://localhost:3000).
+
+3. El frontend llama al API en **http://localhost:3001** (controlado por `NEXT_PUBLIC_API_URL`). Si ves "Error al iniciar sesión" o "No se pudo conectar", asegúrate de que el **backend esté corriendo en la terminal 1**.
+
 ## Configuración
 
 ### 1. Supabase
@@ -30,7 +54,7 @@ Ver [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) para el diseño completo.
 
 ### 2. Variables de entorno
 
-Crea `backend/.env`:
+Crear `backend/.env`:
 
 ```env
 PORT=3001

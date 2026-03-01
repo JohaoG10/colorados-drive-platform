@@ -176,7 +176,7 @@ export default function AdminExamsPage() {
       )}
 
       {showForm && (
-        <form onSubmit={createExam} className="bg-white rounded-xl border border-neutral-200 shadow-sm p-6 space-y-5">
+        <form onSubmit={createExam} className="bg-white rounded-xl border border-neutral-200 shadow-sm p-4 sm:p-6 space-y-5">
           <div>
             <label className="block text-sm font-medium mb-2">Alcance</label>
             <div className="flex gap-4">
@@ -233,7 +233,7 @@ export default function AdminExamsPage() {
               placeholder="Ej: Examen Señales de tránsito"
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1">Cantidad de preguntas</label>
               <input

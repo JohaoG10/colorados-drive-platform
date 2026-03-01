@@ -156,7 +156,7 @@ export default function AdminNotificationsPage() {
             <h3 className="font-semibold text-neutral-900">Nuevo aviso</h3>
             <p className="text-sm text-neutral-500 mt-0.5">Se enviará a todos los estudiantes del curso seleccionado.</p>
           </div>
-          <form onSubmit={handleSend} className="p-6 space-y-5">
+          <form onSubmit={handleSend} className="p-4 sm:p-6 space-y-5">
             <div>
               <label className="block text-sm font-medium text-neutral-700 mb-2">Curso (número de curso)</label>
               <select
@@ -199,7 +199,7 @@ export default function AdminNotificationsPage() {
             <button
               type="submit"
               disabled={sending || !form.cohortId || !form.title.trim() || !form.body.trim()}
-              className="w-full py-3.5 rounded-xl font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:pointer-events-none transition-colors flex items-center justify-center gap-2"
+              className="w-full min-h-[48px] py-3.5 rounded-xl font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:pointer-events-none transition-colors flex items-center justify-center gap-2"
             >
               {sending ? (
                 <>
@@ -260,7 +260,7 @@ export default function AdminNotificationsPage() {
                       </span>
                     </button>
                     {expandedId === n.id && (
-                      <div className="px-6 pb-4 pt-0 pl-[4.5rem]">
+                      <div className="px-4 sm:px-6 pb-4 pt-0 pl-4 sm:pl-[4.5rem]">
                         <div className="rounded-xl bg-neutral-100 p-4 text-sm text-neutral-700 whitespace-pre-wrap">
                           {n.body}
                         </div>

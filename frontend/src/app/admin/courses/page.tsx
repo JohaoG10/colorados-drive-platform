@@ -46,11 +46,13 @@ export default function AdminCoursesPage() {
   const [editCourseModal, setEditCourseModal] = useState<Course | null>(null);
   const [editCourseForm, setEditCourseForm] = useState({ name: '', price: '' });
   const [showNumberForm, setShowNumberForm] = useState(false);
-  const [numberForm, setNumberForm] = useState({ courseId: '', number: '' });
+  const [numberForm, setNumberForm] = useState({ courseId: '', number: '', startDate: '', endDate: '' });
   const [uploadingFile, setUploadingFile] = useState(false);
   const [message, setMessage] = useState('');
   const [apiError, setApiError] = useState('');
-  const [cohorts, setCohorts] = useState<{ id: string; name: string; code: string; course_id: string; courses?: { name: string } }[]>([]);
+  const [cohorts, setCohorts] = useState<{ id: string; name: string; code: string; course_id: string; start_date?: string | null; end_date?: string | null; courses?: { name: string } }[]>([]);
+  const [editCohortModal, setEditCohortModal] = useState<{ id: string; name: string; code: string; course_id: string; start_date?: string | null; end_date?: string | null; courses?: { name: string } } | null>(null);
+  const [editCohortForm, setEditCohortForm] = useState({ courseId: '', number: '', startDate: '', endDate: '' });
 
   const load = () => {
     if (!token) return;
@@ -161,16 +163,19 @@ export default function AdminCoursesPage() {
     }
     try {
       const num = numberForm.number.trim();
+      const body: { courseId: string; name: string; code: string; startDate?: string; endDate?: string } = { courseId: numberForm.courseId, name: num, code: num };
+      if (numberForm.startDate.trim()) body.startDate = numberForm.startDate.trim().slice(0, 10);
+      if (numberForm.endDate.trim()) body.endDate = numberForm.endDate.trim().slice(0, 10);
       const res = await fetch(`${API_URL}/api/admin/cohorts`, {
         method: 'POST',
         headers: { ...getAuthHeaders(token!), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ courseId: numberForm.courseId, name: num, code: num }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (res.status === 401) { triggerSessionExpired(); return; }
       if (!res.ok) throw new Error(data.error || 'Error');
       setMessage('Número de curso creado. Ya puedes matricular usuarios.');
-      setNumberForm({ courseId: '', number: '' });
+      setNumberForm({ courseId: '', number: '', startDate: '', endDate: '' });
       setShowNumberForm(false);
       if (token) {
         fetch(`${API_URL}/api/admin/cohorts`, { headers: getAuthHeaders(token) })
@@ -195,6 +200,43 @@ export default function AdminCoursesPage() {
           .then((data) => setCohorts(Array.isArray(data) ? data : []));
       }
     } catch { setMessage('Error al eliminar'); }
+  };
+
+  const updateCohort = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editCohortModal || !token) return;
+    setMessage('');
+    if (!editCohortForm.courseId || !editCohortForm.number.trim()) {
+      setMessage('Tipo de curso y número son obligatorios.');
+      return;
+    }
+    try {
+      const num = editCohortForm.number.trim();
+      const body: { courseId: string; name: string; code: string; startDate?: string; endDate?: string } = {
+        courseId: editCohortForm.courseId,
+        name: num,
+        code: num,
+      };
+      if (editCohortForm.startDate.trim()) body.startDate = editCohortForm.startDate.trim().slice(0, 10);
+      if (editCohortForm.endDate.trim()) body.endDate = editCohortForm.endDate.trim().slice(0, 10);
+      const res = await fetch(`${API_URL}/api/admin/cohorts/${editCohortModal.id}`, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.status === 401) { triggerSessionExpired(); return; }
+      if (!res.ok) throw new Error(data?.error || 'Error');
+      setMessage('Número de curso actualizado.');
+      setEditCohortModal(null);
+      if (token) {
+        fetch(`${API_URL}/api/admin/cohorts`, { headers: getAuthHeaders(token) })
+          .then((r) => r.json())
+          .then((data) => setCohorts(Array.isArray(data) ? data : []));
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Error al actualizar');
+    }
   };
 
   const createSubject = async (e: React.FormEvent) => {
@@ -407,9 +449,9 @@ export default function AdminCoursesPage() {
             )}
 
             {showNumberForm && (
-              <form onSubmit={createNumber} className="bg-white rounded-xl border p-6 space-y-4">
+              <form onSubmit={createNumber} className="bg-white rounded-xl border border-neutral-200 p-6 space-y-4 shadow-sm">
                 <h3 className="font-semibold text-neutral-900">Crear número de curso</h3>
-                <p className="text-sm text-neutral-500">Elige el tipo de curso y solo pon el número. No pongas el nombre otra vez.</p>
+                <p className="text-sm text-neutral-500">Elige el tipo de curso y solo pon el número. Opcionalmente define las fechas de inicio y término del curso; al inscribir estudiantes se usarán automáticamente.</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium mb-1">Tipo de curso</label>
@@ -417,7 +459,7 @@ export default function AdminCoursesPage() {
                       required
                       value={numberForm.courseId}
                       onChange={(e) => setNumberForm({ ...numberForm, courseId: e.target.value })}
-                      className="w-full px-4 py-2 rounded-lg border"
+                      className="w-full px-4 py-2 rounded-lg border border-neutral-200"
                     >
                       <option value="">Elegir tipo</option>
                       {courses.map((c) => (
@@ -433,8 +475,28 @@ export default function AdminCoursesPage() {
                       value={numberForm.number}
                       onChange={(e) => setNumberForm({ ...numberForm, number: e.target.value })}
                       placeholder="Ej: 2, 3, 200"
-                      className="w-full px-4 py-2 rounded-lg border"
+                      className="w-full px-4 py-2 rounded-lg border border-neutral-200"
                     />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Fecha de inicio (curso)</label>
+                    <input
+                      type="date"
+                      value={numberForm.startDate}
+                      onChange={(e) => setNumberForm({ ...numberForm, startDate: e.target.value })}
+                      className="w-full px-4 py-2 rounded-lg border border-neutral-200"
+                    />
+                    <p className="text-xs text-neutral-500 mt-0.5">Opcional. Se aplicará a cada estudiante inscrito en este número.</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Fecha de término (curso)</label>
+                    <input
+                      type="date"
+                      value={numberForm.endDate}
+                      onChange={(e) => setNumberForm({ ...numberForm, endDate: e.target.value })}
+                      className="w-full px-4 py-2 rounded-lg border border-neutral-200"
+                    />
+                    <p className="text-xs text-neutral-500 mt-0.5">Opcional.</p>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -494,7 +556,7 @@ export default function AdminCoursesPage() {
                 <thead className="bg-neutral-50/50">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Curso completo</th>
-                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700 w-24">Acciones</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700 w-32">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -502,7 +564,10 @@ export default function AdminCoursesPage() {
                     <tr key={co.id} className="border-t border-neutral-100 hover:bg-neutral-50/50 transition-colors">
                       <td className="px-6 py-4 font-medium text-neutral-900">{co.courses?.name || 'Curso'} Nro {co.name}</td>
                       <td className="px-6 py-4">
-                        <button onClick={() => deleteCohort(co.id)} className="text-red-600 hover:text-red-700 hover:underline text-sm font-medium transition-colors">Eliminar</button>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => { setEditCohortModal(co); setEditCohortForm({ courseId: co.course_id, number: co.name, startDate: (co.start_date ?? '').toString().slice(0, 10), endDate: (co.end_date ?? '').toString().slice(0, 10) }); }} className="text-red-600 hover:text-red-700 hover:underline text-sm font-medium transition-colors">Editar</button>
+                          <button onClick={() => deleteCohort(co.id)} className="text-neutral-600 hover:text-neutral-700 hover:underline text-sm font-medium transition-colors">Eliminar</button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -512,9 +577,66 @@ export default function AdminCoursesPage() {
             )}
           </div>
 
+          {editCohortModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto" onClick={() => setEditCohortModal(null)}>
+              <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-4 sm:p-6 my-auto max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-lg font-semibold text-neutral-900 mb-4">Editar número de curso</h3>
+                <form onSubmit={updateCohort} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-700 mb-1">Tipo de curso</label>
+                    <select
+                      required
+                      value={editCohortForm.courseId}
+                      onChange={(e) => setEditCohortForm({ ...editCohortForm, courseId: e.target.value })}
+                      className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
+                    >
+                      <option value="">Elegir tipo</option>
+                      {courses.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-700 mb-1">Número</label>
+                    <input
+                      type="text"
+                      required
+                      value={editCohortForm.number}
+                      onChange={(e) => setEditCohortForm({ ...editCohortForm, number: e.target.value })}
+                      placeholder="Ej: 2, 3, 200"
+                      className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-700 mb-1">Fecha de inicio (curso)</label>
+                    <input
+                      type="date"
+                      value={editCohortForm.startDate}
+                      onChange={(e) => setEditCohortForm({ ...editCohortForm, startDate: e.target.value })}
+                      className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-neutral-700 mb-1">Fecha de término (curso)</label>
+                    <input
+                      type="date"
+                      value={editCohortForm.endDate}
+                      onChange={(e) => setEditCohortForm({ ...editCohortForm, endDate: e.target.value })}
+                      className="w-full rounded-xl border border-neutral-200 px-4 py-2.5 focus:border-red-500 focus:ring-2 focus:ring-red-500/20"
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button type="submit" className="px-4 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700">Guardar</button>
+                    <button type="button" onClick={() => setEditCohortModal(null)} className="px-4 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50">Cancelar</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
           {editCourseModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setEditCourseModal(null)}>
-              <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto" onClick={() => setEditCourseModal(null)}>
+              <div className="w-full max-w-md my-auto rounded-2xl bg-white p-4 sm:p-6 shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                 <h3 className="text-lg font-semibold text-neutral-900 mb-4">Editar tipo de curso</h3>
                 <form onSubmit={updateCourse} className="space-y-4">
                   <div>
@@ -638,11 +760,11 @@ export default function AdminCoursesPage() {
 
       {tab === 'content' && (
         <>
-          <div className="flex gap-4">
+          <div className="flex flex-col sm:flex-row gap-4 flex-wrap">
             <select
               value={selectedCourse}
               onChange={(e) => { setSelectedCourse(e.target.value); setSelectedSubject(''); }}
-              className="px-4 py-2 rounded-lg border"
+              className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-lg border border-neutral-200"
             >
               <option value="">Curso</option>
               {courses.map((c) => (
@@ -657,7 +779,7 @@ export default function AdminCoursesPage() {
                 setContentForm((f) => ({ ...f, subjectId: v }));
                 if (v) loadContents(v);
               }}
-              className="px-4 py-2 rounded-lg border"
+              className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-lg border border-neutral-200"
             >
               <option value="">Materia</option>
               {filteredSubjects.map((s) => (
@@ -667,7 +789,7 @@ export default function AdminCoursesPage() {
             <button
               onClick={() => { setShowContentForm(true); loadContents(); }}
               disabled={!selectedSubject}
-              className="px-5 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 shadow-md hover:shadow-lg transition-all duration-200"
+              className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 shadow-md hover:shadow-lg transition-all duration-200"
             >
               Crear contenido
             </button>

@@ -17,7 +17,8 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!authLoading && user) {
-      router.replace(user.role === 'admin' ? '/admin' : '/student');
+      const dest = user.role === 'admin' ? '/admin' : user.role === 'instructor' ? '/instructor' : '/student';
+      router.replace(dest);
     }
   }, [user, authLoading, router]);
 
@@ -76,8 +77,8 @@ export default function LoginPage() {
       </div>
 
       {/* Panel izquierdo: formulario centrado */}
-      <div className="relative z-10 flex-1 flex items-center justify-center p-6 sm:p-10 lg:p-16">
-        <div className="w-full max-w-[420px]">
+      <div className="relative z-10 flex-1 flex items-center justify-center p-4 sm:p-10 lg:p-16 overflow-y-auto">
+        <div className="w-full max-w-[420px] py-4">
           <div
             className="relative rounded-3xl bg-white/95 backdrop-blur-xl shadow-2xl shadow-black/20 border border-white/20 p-8 sm:p-10 login-stagger"
             style={{ animation: 'login-fade-in-up 0.6s ease-out' }}
@@ -178,7 +179,7 @@ export default function LoginPage() {
                 type="submit"
                 disabled={loading}
                 className="
-                  w-full py-4 rounded-xl font-semibold text-white
+                  w-full min-h-[48px] py-4 rounded-xl font-semibold text-white
                   bg-gradient-to-b from-red-600 to-red-700
                   shadow-lg shadow-red-600/30
                   hover:from-red-500 hover:to-red-600

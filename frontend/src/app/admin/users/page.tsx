@@ -24,6 +24,12 @@ interface UserRow {
   schedule_id: string | null;
   total_amount: number | null;
   amount_paid: number | null;
+  birth_date?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  modality?: string | null;
   courses?: { name: string; code: string; price?: number } | null;
   cohorts?: { id: string; name: string; code: string } | null;
   course_schedules?: {
@@ -59,6 +65,7 @@ export default function AdminUsersPage() {
   const [availableSlots, setAvailableSlots] = useState<{ day_of_week: number; start_time: string }[]>([]);
   const [editAvailableSlots, setEditAvailableSlots] = useState<{ day_of_week: number; start_time: string }[]>([]);
   const [filterCohortId, setFilterCohortId] = useState('');
+  const [filterRole, setFilterRole] = useState<'student' | 'instructor' | 'admin' | ''>('student');
   const [form, setForm] = useState<{
     email: string; password: string; fullName: string; cedula: string; gender: string; citizenship: string; bloodType: string;
     birthDate: string; address: string; phone: string; startDate: string; endDate: string; modality: string;
@@ -88,19 +95,34 @@ export default function AdminUsersPage() {
   const [activityModal, setActivityModal] = useState<{ userId: string; name: string } | null>(null);
   const [activity, setActivity] = useState<{ last_active_at: string | null; total_time_seconds: number } | null>(null);
   const [editModal, setEditModal] = useState<UserRow | null>(null);
-  const [editForm, setEditForm] = useState<{ fullName: string; cedula: string; gender: string; citizenship: string; bloodType: string; role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string; scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string; practiceWeeks: 1 | 2 | 3 | ''; practiceStartDate: string; practiceEndDate: string; password: string }>({
-    fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', practiceStartDate: '', practiceEndDate: '', password: '',
+  const [editForm, setEditForm] = useState<{
+    fullName: string; cedula: string; gender: string; citizenship: string; bloodType: string;
+    role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string;
+    scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string;
+    practiceWeeks: 1 | 2 | 3 | ''; practiceStartDate: string; practiceEndDate: string;
+    birthDate: string; address: string; phone: string; startDate: string; endDate: string; modality: string;
+    password: string;
+  }>({
+    fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '',
+    role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '',
+    practiceStartDate: '', practiceEndDate: '',
+    birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '',
+    password: '',
   });
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
 
-  const load = () => {
+  const load = (roleOverride?: 'student' | 'instructor' | 'admin' | '') => {
     if (!token) return;
     setApiError('');
     const headers = getAuthHeaders(token);
     const params = new URLSearchParams();
+    const effectiveRole = roleOverride !== undefined ? roleOverride : filterRole;
     if (searchQuery.trim()) params.set('search', searchQuery.trim());
-    if (filterCohortId) params.set('cohortId', filterCohortId);
+    if (effectiveRole) params.set('role', effectiveRole);
+    if (effectiveRole === 'student' || effectiveRole === '') {
+      if (filterCohortId) params.set('cohortId', filterCohortId);
+    }
     const url = params.toString() ? `${API_URL}/api/admin/users?${params.toString()}` : `${API_URL}/api/admin/users`;
     fetch(url, { headers })
       .then((r) => r.json().then((data) => ({ ok: r.ok, status: r.status, data })))
@@ -203,17 +225,30 @@ export default function AdminUsersPage() {
     e.preventDefault();
     setError('');
     setSuccess('');
-    if (form.role === 'student' && !form.cohortId) {
-      setError('Selecciona el tipo de curso y el número. Si no hay cursos, créalos en Cursos y materias.');
+    if (!form.fullName.trim()) {
+      setError('El nombre completo es requerido.');
       return;
     }
-    if (form.role === 'student' && !form.instructorId) {
-      setError('Selecciona instructor.');
+    if (!form.cedula.trim()) {
+      setError('El número de cédula es requerido.');
       return;
     }
-    if (form.role === 'student' && (!form.startTime || !form.practiceStartDate.trim() || !form.practiceEndDate.trim())) {
-      setError('Completa hora de inicio y fechas de inicio y término de prácticas.');
-      return;
+    const hasBlankOptionals = form.role === 'student' && (
+      !form.cohortId ||
+      !form.instructorId ||
+      !form.startTime ||
+      !form.birthDate.trim() ||
+      !form.practiceStartDate.trim() ||
+      !form.practiceEndDate.trim() ||
+      !form.phone.trim() ||
+      !form.address.trim()
+    );
+    if (hasBlankOptionals) {
+      const proceed = window.confirm(
+        'Hay datos opcionales sin completar (curso, horario, fechas de práctica, teléfono, dirección, etc.). ' +
+        '¿Desea inscribir al alumno de todos modos? Podrá completar esta información más tarde al editar el usuario.'
+      );
+      if (!proceed) return;
     }
     const courseForPrice = form.courseId ? courses.find((c) => c.id === form.courseId) : null;
     const totalPrice = courseForPrice && typeof (courseForPrice as { price?: number }).price === 'number' ? (courseForPrice as { price?: number }).price! : 0;
@@ -245,6 +280,10 @@ export default function AdminUsersPage() {
         practiceStartDate: form.role === 'student' ? (form.practiceStartDate.trim() || null) : null,
         practiceEndDate: form.role === 'student' ? (form.practiceEndDate.trim() || null) : null,
       };
+      if (form.role === 'student') {
+        delete (body as Record<string, unknown>).startDate;
+        delete (body as Record<string, unknown>).endDate;
+      }
       if (form.role === 'student' && initialPaymentAmount !== undefined) {
         body.initialPaymentAmount = initialPaymentAmount;
       }
@@ -317,11 +356,11 @@ export default function AdminUsersPage() {
     const s = u.course_schedules;
     const hasGroup = s?.schedule_label && (s.schedule_label.startsWith('Lunes a Viernes') || s.schedule_label.startsWith('Sábado y Domingo'));
     setEditForm({
-      fullName: u.full_name || '',
-      cedula: u.cedula || '',
+      fullName: (u.full_name || '').trim(),
+      cedula: (u.cedula || '').trim(),
       gender: u.gender === 'masculino' || u.gender === 'femenino' ? u.gender : '',
-      citizenship: u.citizenship || '',
-      bloodType: u.blood_type || '',
+      citizenship: (u.citizenship || '').trim(),
+      bloodType: (u.blood_type || '').trim(),
       role: (u.role as 'admin' | 'student') || 'student',
       courseId: cohort?.course_id || '',
       cohortId: u.cohort_id || '',
@@ -330,8 +369,14 @@ export default function AdminUsersPage() {
       dayOfWeek: s?.day_of_week ?? 0,
       startTime: s?.start_time ? (typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : String(s.start_time)) : '',
       practiceWeeks: (u.practice_weeks === 1 || u.practice_weeks === 2 || u.practice_weeks === 3) ? u.practice_weeks : '',
-      practiceStartDate: (u as UserRow & { practice_start_date?: string | null }).practice_start_date ?? '',
-      practiceEndDate: (u as UserRow & { practice_end_date?: string | null }).practice_end_date ?? '',
+      practiceStartDate: (u.practice_start_date ?? '').toString().slice(0, 10),
+      practiceEndDate: (u.practice_end_date ?? '').toString().slice(0, 10),
+      birthDate: (u.birth_date ?? '').toString().slice(0, 10),
+      address: (u.address || '').trim(),
+      phone: (u.phone || '').trim(),
+      startDate: (u.start_date ?? '').toString().slice(0, 10),
+      endDate: (u.end_date ?? '').toString().slice(0, 10),
+      modality: (u.modality || '').trim(),
       password: '',
     });
     setEditError('');
@@ -343,21 +388,13 @@ export default function AdminUsersPage() {
     if (!editModal || !token) return;
     setEditError('');
     setEditSuccess('');
-    if (editForm.role === 'student' && !editForm.cohortId) {
-      setEditError('Selecciona el tipo de curso y el número');
-      return;
-    }
-    if (editForm.role === 'student' && !editForm.instructorId) {
-      setEditError('Selecciona instructor.');
-      return;
-    }
-    if (editForm.role === 'student' && (!editForm.startTime || !editForm.practiceStartDate.trim() || !editForm.practiceEndDate.trim())) {
-      setEditError('Completa hora de inicio y fechas de inicio y término de prácticas.');
+    if (!editForm.fullName.trim()) {
+      setEditError('El nombre completo es requerido.');
       return;
     }
     try {
-      const body: { fullName?: string; role?: string; cohortId?: string | null; cedula?: string | null; gender?: string | null; instructorId?: string; dayOfWeek?: number; startTime?: string; scheduleType?: string; practiceWeeks?: number; practiceStartDate?: string | null; practiceEndDate?: string | null; citizenship?: string | null; bloodType?: string | null; password?: string } = {
-        fullName: editForm.fullName,
+      const body: { fullName?: string; role?: string; cohortId?: string | null; cedula?: string | null; gender?: string | null; instructorId?: string; dayOfWeek?: number; startTime?: string; scheduleType?: string; practiceWeeks?: number; practiceStartDate?: string | null; practiceEndDate?: string | null; citizenship?: string | null; bloodType?: string | null; birthDate?: string | null; address?: string | null; phone?: string | null; startDate?: string | null; endDate?: string | null; modality?: string | null; password?: string } = {
+        fullName: editForm.fullName.trim(),
         role: editForm.role,
         cohortId: editForm.cohortId || null,
         cedula: editForm.cedula.trim() || null,
@@ -371,8 +408,14 @@ export default function AdminUsersPage() {
         practiceEndDate: editForm.role === 'student' ? (editForm.practiceEndDate.trim() || null) : undefined,
         citizenship: editForm.citizenship.trim() || null,
         bloodType: editForm.bloodType || null,
+        birthDate: editForm.role === 'student' ? (editForm.birthDate.trim() || null) : undefined,
+        address: editForm.role === 'student' ? (editForm.address.trim() || null) : undefined,
+        phone: editForm.role === 'student' ? (editForm.phone.trim() || null) : undefined,
+        startDate: editForm.role === 'student' ? (editForm.startDate.trim() || null) : undefined,
+        endDate: editForm.role === 'student' ? (editForm.endDate.trim() || null) : undefined,
+        modality: editForm.role === 'student' && (editForm.modality === 'intensivo' || editForm.modality === 'regular' || editForm.modality === 'fin de semana') ? editForm.modality : undefined,
       };
-      if (editForm.password.trim()) body.password = editForm.password;
+      if (editForm.password.trim()) body.password = editForm.password.trim();
       const res = await fetch(`${API_URL}/api/admin/users/${editModal.id}`, {
         method: 'PATCH',
         headers: { ...getAuthHeaders(token), 'Content-Type': 'application/json' },
@@ -427,12 +470,29 @@ export default function AdminUsersPage() {
         </div>
       )}
       <div className="flex flex-wrap justify-between items-center gap-4">
-        <div className="flex flex-wrap gap-2 flex-1 min-w-0">
+        <div className="flex flex-wrap gap-2 flex-1 min-w-0 w-full sm:w-auto">
+          <select
+            value={filterRole}
+            onChange={(e) => {
+              const newRole = e.target.value as 'student' | 'instructor' | 'admin' | '';
+              setFilterRole(newRole);
+              setLoading(true);
+              load(newRole);
+            }}
+            className="form-select w-full sm:min-w-[180px] sm:w-auto"
+            aria-label="Filtrar por tipo de usuario"
+          >
+            <option value="student">Estudiantes</option>
+            <option value="instructor">Instructores</option>
+            <option value="admin">Administradores</option>
+            <option value="">Todos los usuarios</option>
+          </select>
           <select
             value={filterCohortId}
             onChange={(e) => { setFilterCohortId(e.target.value); setLoading(true); load(); }}
-            className="form-select min-w-[200px]"
+            className="form-select w-full sm:min-w-[200px] sm:w-auto"
             aria-label="Filtrar por número de curso"
+            style={{ display: (filterRole === 'student' || filterRole === '') ? undefined : 'none' }}
           >
             <option value="">Todos los cursos</option>
             {cohorts.map((c) => {
@@ -446,22 +506,22 @@ export default function AdminUsersPage() {
           </select>
           <form
             onSubmit={(e) => { e.preventDefault(); setLoading(true); load(); }}
-            className="flex gap-2 flex-1 min-w-0"
+            className="flex gap-2 flex-1 min-w-0 w-full sm:w-auto"
           >
             <input
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Buscar por cédula, nombre o email..."
-              className="form-input min-w-[200px]"
+              className="form-input flex-1 min-w-0 min-h-[44px] sm:min-h-0 sm:min-w-[200px]"
             />
-            <button type="submit" className="btn-secondary">
+            <button type="submit" className="btn-secondary shrink-0">
               Buscar
             </button>
           </form>
           <button
             onClick={() => setShowForm(!showForm)}
-            className="btn-primary shrink-0"
+            className="btn-primary shrink-0 w-full sm:w-auto min-h-[44px] sm:min-h-0"
           >
             {showForm ? 'Cancelar' : 'Crear usuario'}
           </button>
@@ -501,8 +561,8 @@ export default function AdminUsersPage() {
                   <input type="text" required value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} placeholder="Ej: María García" className="form-input" />
                 </div>
                 <div>
-                  <label className="form-label">Cédula</label>
-                  <input type="text" value={form.cedula} onChange={(e) => setForm({ ...form, cedula: e.target.value })} placeholder="Ej: 1234567890" className="form-input" />
+                  <label className="form-label">Cédula *</label>
+                  <input type="text" required value={form.cedula} onChange={(e) => setForm({ ...form, cedula: e.target.value })} placeholder="Ej: 1234567890" className="form-input" />
                 </div>
                 <div>
                   <label className="form-label">Ciudadanía</label>
@@ -550,15 +610,7 @@ export default function AdminUsersPage() {
                     <input type="text" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Ej: Av. Principal 123, ciudad" className="form-input" />
                   </div>
                   <div>
-                    <label className="form-label">Fecha de inicio (curso)</label>
-                    <input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value, practiceStartDate: form.practiceStartDate || e.target.value })} className="form-input" />
-                  </div>
-                  <div>
-                    <label className="form-label">Fecha de término (curso)</label>
-                    <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="form-input" />
-                  </div>
-                  <div>
-                    <label className="form-label">Inicio prácticas *</label>
+                    <label className="form-label">Inicio prácticas</label>
                     <input type="date" value={form.practiceStartDate} onChange={(e) => {
                       const v = e.target.value;
                       setForm((prev) => {
@@ -571,10 +623,10 @@ export default function AdminUsersPage() {
                         return next;
                       });
                     }} className="form-input" />
-                    <p className="mt-1 text-xs text-neutral-500">Desde cuándo empieza las prácticas de conducción.</p>
+                    <p className="mt-1 text-xs text-neutral-500">Desde cuándo empieza las prácticas de conducción. Puedes completarlo después al editar.</p>
                   </div>
                   <div>
-                    <label className="form-label">Término prácticas *</label>
+                    <label className="form-label">Término prácticas</label>
                     <input type="date" value={form.practiceEndDate} onChange={(e) => setForm({ ...form, practiceEndDate: e.target.value })} className="form-input" />
                     <p className="mt-1 text-xs text-neutral-500">Se calcula por semanas de práctica si no lo cambias.</p>
                   </div>
@@ -626,9 +678,9 @@ export default function AdminUsersPage() {
                 </h4>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="form-label">Tipo de curso *</label>
-                    <select value={form.courseId} onChange={(e) => setForm({ ...form, courseId: e.target.value, cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" required>
-                      <option value="">Elegir tipo</option>
+                    <label className="form-label">Tipo de curso</label>
+                    <select value={form.courseId} onChange={(e) => setForm({ ...form, courseId: e.target.value, cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select">
+                      <option value="">Elegir tipo (opcional)</option>
                       {courses.map((c) => (
                         <option key={c.id} value={c.id}>{c.name}</option>
                       ))}
@@ -636,9 +688,9 @@ export default function AdminUsersPage() {
                     {courses.length === 0 && <p className="mt-1 text-xs text-amber-600">Crea un curso en Cursos y materias.</p>}
                   </div>
                   <div>
-                    <label className="form-label">Número de curso *</label>
-                    <select value={form.cohortId} onChange={(e) => setForm({ ...form, cohortId: e.target.value, instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" required disabled={!form.courseId}>
-                      <option value="">Elegir número</option>
+                    <label className="form-label">Número de curso</label>
+                    <select value={form.cohortId} onChange={(e) => setForm({ ...form, cohortId: e.target.value, instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" disabled={!form.courseId}>
+                      <option value="">Elegir número (opcional)</option>
                       {cohorts.filter((c) => c.course_id === form.courseId).map((c) => (
                         <option key={c.id} value={c.id}>Nro {c.name}</option>
                       ))}
@@ -646,9 +698,9 @@ export default function AdminUsersPage() {
                     {form.courseId && cohorts.filter((c) => c.course_id === form.courseId).length === 0 && <p className="mt-1 text-xs text-amber-600">Crea un número en Cursos y materias.</p>}
                   </div>
                   <div>
-                    <label className="form-label">Instructor *</label>
-                    <select value={form.instructorId} onChange={(e) => setForm({ ...form, instructorId: e.target.value, scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" required disabled={!form.cohortId}>
-                      <option value="">Elegir instructor</option>
+                    <label className="form-label">Instructor</label>
+                    <select value={form.instructorId} onChange={(e) => setForm({ ...form, instructorId: e.target.value, scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" disabled={!form.cohortId}>
+                      <option value="">Elegir instructor (opcional)</option>
                       {instructors.map((i) => (
                         <option key={i.id} value={i.id}>{i.full_name}</option>
                       ))}
@@ -656,7 +708,7 @@ export default function AdminUsersPage() {
                     {form.cohortId && instructors.length === 0 && <p className="mt-1 text-xs text-amber-600">Crea instructores en Instructores.</p>}
                   </div>
                   <div>
-                    <label className="form-label">Modalidad de prácticas *</label>
+                    <label className="form-label">Modalidad de prácticas</label>
                     <select
                       value={form.scheduleType}
                       onChange={(e) => setForm({ ...form, scheduleType: e.target.value as 'weekdays' | 'weekends', startTime: form.startTime })}
@@ -669,14 +721,13 @@ export default function AdminUsersPage() {
                     <p className="mt-1 text-xs text-neutral-500">Las prácticas serán en ese rango de fechas (inicio y término) en esta modalidad.</p>
                   </div>
                   <div>
-                    <label className="form-label">Hora (inicio) *</label>
+                    <label className="form-label">Hora (inicio)</label>
                     <select
                       value={form.startTime}
                       onChange={(e) => setForm({ ...form, startTime: e.target.value })}
                       className="form-select"
-                      required
                     >
-                      <option value="">06:00 - 23:00</option>
+                      <option value="">06:00 - 23:00 (opcional)</option>
                       {Array.from({ length: 18 }, (_, i) => `${String(i + 6).padStart(2, '0')}:00`).map((t) => (
                         <option key={t} value={t}>{t}</option>
                       ))}
@@ -907,8 +958,8 @@ export default function AdminUsersPage() {
       )}
 
       {editModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setEditModal(null)}>
-          <div className="bg-white rounded-xl p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEditModal(null)}>
+          <div className="bg-white rounded-xl p-6 max-w-lg w-full mx-auto max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="font-semibold mb-4">Editar usuario: {editModal.email}</h3>
             {editError && <div className="p-3 rounded-lg bg-red-50 text-red-700 text-sm mb-4">{editError}</div>}
             {editSuccess && <div className="p-3 rounded-lg bg-green-50 text-green-700 text-sm mb-4">{editSuccess}</div>}
@@ -951,9 +1002,47 @@ export default function AdminUsersPage() {
               </div>
               {editForm.role === 'student' && (
                 <>
+                  <div className="border-t border-neutral-100 pt-4 mt-2">
+                    <h4 className="text-sm font-semibold text-neutral-700 mb-3">Datos de inscripción (completar o modificar)</h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
+                      <div>
+                        <label className="form-label">Fecha de nacimiento</label>
+                        <input type="date" value={editForm.birthDate} onChange={(e) => setEditForm({ ...editForm, birthDate: e.target.value })} className="form-input" />
+                      </div>
+                      <div>
+                        <label className="form-label">Teléfono</label>
+                        <input type="tel" value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} placeholder="Ej: 0991234567" className="form-input" />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="form-label">Dirección</label>
+                        <input type="text" value={editForm.address} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} placeholder="Ej: Av. Principal 123" className="form-input" />
+                      </div>
+                      <div>
+                        <label className="form-label">Fecha de inicio (curso)</label>
+                        <input type="date" value={editForm.startDate} onChange={(e) => setEditForm({ ...editForm, startDate: e.target.value })} className="form-input" />
+                      </div>
+                      <div>
+                        <label className="form-label">Fecha de término (curso)</label>
+                        <input type="date" value={editForm.endDate} onChange={(e) => setEditForm({ ...editForm, endDate: e.target.value })} className="form-input" />
+                      </div>
+                      <div>
+                        <label className="form-label">Modalidad</label>
+                        <select value={editForm.modality} onChange={(e) => setEditForm({ ...editForm, modality: e.target.value })} className="form-select">
+                          <option value="">Seleccionar</option>
+                          <option value="intensivo">Intensivo</option>
+                          <option value="regular">Regular</option>
+                          <option value="fin de semana">Fin de semana</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+              {editForm.role === 'student' && (
+                <>
                   <div>
                     <label className="form-label">Tipo de curso</label>
-                    <select value={editForm.courseId} onChange={(e) => setEditForm({ ...editForm, courseId: e.target.value, cohortId: '' })} className="form-select" required>
+                    <select value={editForm.courseId} onChange={(e) => setEditForm({ ...editForm, courseId: e.target.value, cohortId: '' })} className="form-select">
                       <option value="">Elegir tipo</option>
                       {courses.map((c) => (
                         <option key={c.id} value={c.id}>{c.name}</option>
@@ -962,7 +1051,7 @@ export default function AdminUsersPage() {
                   </div>
                   <div>
                     <label className="form-label">Número de curso</label>
-                    <select value={editForm.cohortId} onChange={(e) => setEditForm({ ...editForm, cohortId: e.target.value, instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" required disabled={!editForm.courseId}>
+                    <select value={editForm.cohortId} onChange={(e) => setEditForm({ ...editForm, cohortId: e.target.value, instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select" disabled={!editForm.courseId}>
                       <option value="">Elegir número</option>
                       {cohorts.filter((c) => c.course_id === editForm.courseId).map((c) => (
                         <option key={c.id} value={c.id}>Nro {c.name}</option>

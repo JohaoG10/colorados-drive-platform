@@ -26,12 +26,13 @@ export default function AdminInstructorsPage() {
     fullName: '',
     email: '',
     phone: '',
+    password: '',
     isActive: true,
   });
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
   const [editModal, setEditModal] = useState<Instructor | null>(null);
-  const [editForm, setEditForm] = useState({ fullName: '', email: '', phone: '', isActive: true });
+  const [editForm, setEditForm] = useState({ fullName: '', email: '', phone: '', password: '', isActive: true });
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
 
@@ -74,6 +75,7 @@ export default function AdminInstructorsPage() {
           fullName: form.fullName.trim(),
           email: form.email.trim() || null,
           phone: form.phone.trim() || null,
+          password: form.password.trim() || undefined,
           isActive: form.isActive,
         }),
       });
@@ -81,7 +83,7 @@ export default function AdminInstructorsPage() {
       if (res.status === 401) { triggerSessionExpired(); return; }
       if (!res.ok) throw new Error(data.error || 'Error al crear');
       setFormSuccess('Instructor creado correctamente.');
-      setForm({ fullName: '', email: '', phone: '', isActive: true });
+      setForm({ fullName: '', email: '', phone: '', password: '', isActive: true });
       setShowForm(false);
       load();
     } catch (err) {
@@ -106,6 +108,7 @@ export default function AdminInstructorsPage() {
           fullName: editForm.fullName.trim(),
           email: editForm.email.trim() || null,
           phone: editForm.phone.trim() || null,
+          password: editForm.password.trim() || undefined,
           isActive: editForm.isActive,
         }),
       });
@@ -143,6 +146,7 @@ export default function AdminInstructorsPage() {
       fullName: inst.full_name || '',
       email: inst.email || '',
       phone: inst.phone || '',
+      password: '',
       isActive: inst.is_active,
     });
     setEditError('');
@@ -154,7 +158,7 @@ export default function AdminInstructorsPage() {
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 text-white shadow-xl shadow-red-600/20">
         <div className="relative z-10">
           <h2 className="text-xl font-bold mb-1">Instructores</h2>
-          <p className="text-red-100 text-sm">Gestiona instructores. Todos tienen disponibilidad de 6:00 a 23:00 (horas enteras). Los horarios se asignan al inscribir alumnos.</p>
+          <p className="text-red-100 text-sm">Gestiona instructores. Opcionalmente asigna correo y contraseña para que puedan ingresar y ver únicamente su cuadro semanal con los alumnos asignados.</p>
         </div>
       </div>
 
@@ -170,8 +174,8 @@ export default function AdminInstructorsPage() {
       <div className="flex justify-end">
         <button
           type="button"
-          onClick={() => { setShowForm(!showForm); setFormError(''); setFormSuccess(''); setForm({ fullName: '', email: '', phone: '', isActive: true }); }}
-          className="px-4 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 shadow-md shadow-red-600/20 transition-all"
+          onClick={() => { setShowForm(!showForm); setFormError(''); setFormSuccess(''); setForm({ fullName: '', email: '', phone: '', password: '', isActive: true }); }}
+          className="w-full sm:w-auto min-h-[44px] px-4 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 shadow-md shadow-red-600/20 transition-all"
         >
           {showForm ? 'Cancelar' : 'Nuevo instructor'}
         </button>
@@ -201,6 +205,19 @@ export default function AdminInstructorsPage() {
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none"
                 placeholder="instructor@ejemplo.com"
+              />
+              <p className="text-xs text-neutral-500 mt-0.5">Si completas email y contraseña, el instructor podrá ingresar a la plataforma y ver su cuadro semanal.</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 mb-1">Contraseña (acceso a la plataforma)</label>
+              <input
+                type="password"
+                value={form.password}
+                onChange={(e) => setForm({ ...form, password: e.target.value })}
+                className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none"
+                placeholder="Mínimo 6 caracteres"
+                minLength={6}
+                autoComplete="new-password"
               />
             </div>
             <div>
@@ -274,8 +291,8 @@ export default function AdminInstructorsPage() {
       </div>
 
       {editModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEditModal(null)}>
-          <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto" onClick={() => setEditModal(null)}>
+          <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-lg w-full my-auto shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="font-semibold text-neutral-900 mb-4">Editar instructor</h3>
             {editError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm mb-4">{editError}</div>}
             {editSuccess && <div className="p-3 rounded-xl bg-green-50 text-green-700 text-sm mb-4">{editSuccess}</div>}
@@ -318,11 +335,24 @@ export default function AdminInstructorsPage() {
                 />
                 <label htmlFor="editIsActive" className="text-sm font-medium text-neutral-700">Activo</label>
               </div>
-              <div className="flex gap-2">
-                <button type="submit" className="px-5 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 shadow-md transition-all">
+              <div>
+                <label className="block text-sm font-medium text-neutral-700 mb-1">Nueva contraseña (opcional)</label>
+                <input
+                  type="password"
+                  value={editForm.password}
+                  onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
+                  className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none"
+                  placeholder="Dejar en blanco para no cambiar"
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+                <p className="text-xs text-neutral-500 mt-0.5">Solo si el instructor ya tiene cuenta de acceso. Mínimo 6 caracteres.</p>
+              </div>
+              <div className="flex flex-col-reverse sm:flex-row gap-2">
+                <button type="submit" className="min-h-[44px] flex-1 px-5 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 shadow-md transition-all">
                   Guardar
                 </button>
-                <button type="button" onClick={() => setEditModal(null)} className="px-5 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50">
+                <button type="button" onClick={() => setEditModal(null)} className="min-h-[44px] px-5 py-2.5 rounded-xl border border-neutral-200 hover:bg-neutral-50">
                   Cancelar
                 </button>
               </div>

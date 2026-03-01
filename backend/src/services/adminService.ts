@@ -279,10 +279,13 @@ export async function getOrCreateCohort(courseId: string, number: string) {
   return data;
 }
 
-export async function createCohort(courseId: string, name: string, code: string) {
+export async function createCohort(courseId: string, name: string, code: string, startDate?: string | null, endDate?: string | null) {
+  const insert: Record<string, unknown> = { course_id: courseId, name, code };
+  if (startDate?.trim()) insert.start_date = startDate.trim().slice(0, 10);
+  if (endDate?.trim()) insert.end_date = endDate.trim().slice(0, 10);
   const { data, error } = await supabaseAdmin
     .from('cohorts')
-    .insert({ course_id: courseId, name, code })
+    .insert(insert)
     .select()
     .single();
   if (error) throw new Error(error.message);
@@ -292,7 +295,7 @@ export async function createCohort(courseId: string, name: string, code: string)
 export async function listCohorts(courseId?: string) {
   let query = supabaseAdmin
     .from('cohorts')
-    .select('id, name, code, course_id, created_at, courses(name, code)')
+    .select('id, name, code, course_id, start_date, end_date, created_at, courses(name, code)')
     .order('created_at', { ascending: false });
 
   if (courseId) {
@@ -307,6 +310,27 @@ export async function listCohorts(courseId?: string) {
 export async function deleteCohort(id: string) {
   const { error } = await supabaseAdmin.from('cohorts').delete().eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+export async function updateCohort(
+  id: string,
+  params: { courseId: string; name: string; code: string; startDate?: string | null; endDate?: string | null }
+) {
+  const update: Record<string, unknown> = {
+    course_id: params.courseId,
+    name: params.name.trim(),
+    code: params.code.trim(),
+  };
+  if (params.startDate !== undefined) update.start_date = params.startDate?.trim()?.slice(0, 10) || null;
+  if (params.endDate !== undefined) update.end_date = params.endDate?.trim()?.slice(0, 10) || null;
+  const { data, error } = await supabaseAdmin
+    .from('cohorts')
+    .update(update)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 /**

@@ -34,6 +34,7 @@ export function DashboardLayout({
     ['/admin/courses', 'Cursos y materias'],
     ['/admin/users', 'Usuarios'],
     ['/admin', 'Dashboard'],
+    ['/instructor', 'Calendario'],
     ['/student/progress', 'Progreso'],
     ['/student/notifications', 'Avisos'],
     ['/student/exams', 'Exámenes'],
@@ -42,7 +43,7 @@ export function DashboardLayout({
     ['/student', 'Inicio'],
   ];
   const currentTitle = pageTitles.find(([href]) =>
-    href === '/admin' ? pathname === '/admin' : pathname === href || pathname.startsWith(href + '/')
+    href === '/admin' ? pathname === '/admin' : href === '/instructor' ? pathname.startsWith('/instructor') : pathname === href || pathname.startsWith(href + '/')
   )?.[1] ?? title;
 
   const navContent = (
@@ -62,8 +63,8 @@ export function DashboardLayout({
       </div>
       <nav className="flex-1 p-4 space-y-0.5 overflow-y-auto">
         {navItems.map((item) => {
-          const isRoot = item.href === '/admin' || item.href === '/student';
-          const isActive = isRoot ? pathname === item.href : pathname === item.href || pathname.startsWith(item.href + '/');
+          const isRoot = item.href === '/admin' || item.href === '/student' || item.href === '/instructor';
+          const isActive = isRoot ? (item.href === '/instructor' ? pathname.startsWith('/instructor') : pathname === item.href) : pathname === item.href || pathname.startsWith(item.href + '/');
           return (
             <Link
               key={item.href}
@@ -137,7 +138,7 @@ export function DashboardLayout({
           </div>
           {headerRight}
         </header>
-        <div className="flex-1 p-4 sm:p-6 md:p-8">{children}</div>
+        <div className="flex-1 p-4 sm:p-6 md:p-8 safe-area-bottom">{children}</div>
       </main>
     </div>
   );

@@ -122,15 +122,16 @@ export async function getCourseExportData(cohortId: string): Promise<CourseExpor
   const courseName = cohort.courseName ?? '';
   const courseCode = cohort.courseCode ?? cohort.code ?? '';
 
-  // Fechas del curso: min/max de estudiantes o cohort
-  let startDate = '';
-  let endDate = '';
-  for (const s of students) {
-    if (s.startDate) {
-      if (!startDate || s.startDate < startDate) startDate = s.startDate;
-    }
-    if (s.endDate) {
-      if (!endDate || s.endDate > endDate) endDate = s.endDate;
+  const cohortStart = cohort.startDate ?? null;
+  const cohortEnd = cohort.endDate ?? null;
+
+  // Fechas del curso: usar las del cohort (número de curso) cuando existan; si no, min/max de estudiantes
+  let startDate = cohortStart ?? '';
+  let endDate = cohortEnd ?? '';
+  if (!startDate || !endDate) {
+    for (const s of students) {
+      if (s.startDate && (!startDate || s.startDate < startDate)) startDate = s.startDate;
+      if (s.endDate && (!endDate || s.endDate > endDate)) endDate = s.endDate;
     }
   }
   if (!startDate && students[0]?.startDate) startDate = students[0].startDate;
@@ -237,8 +238,8 @@ export async function getCourseExportData(cohortId: string): Promise<CourseExpor
       gender: s.gender === 'masculino' || s.gender === 'femenino' ? s.gender : '',
       birthDate: s.birthDate ?? '',
       age: edad(s.birthDate),
-      startDate: s.startDate ?? '',
-      endDate: s.endDate ?? '',
+      startDate: s.startDate ?? startDate,
+      endDate: s.endDate ?? endDate,
       scheduleTheory,
       schedulePractice: '', // la plataforma no diferencia práctica; dejar vacío o igual a teoría
       examBySubject,

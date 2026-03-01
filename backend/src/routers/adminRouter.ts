@@ -24,11 +24,11 @@ router.post(
   '/users',
   [
     body('email').isEmail().normalizeEmail(),
-    body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
-    body('fullName').trim().notEmpty(),
+    body('password').isLength({ min: 6 }).withMessage('La contraseña debe tener al menos 6 caracteres'),
+    body('fullName').trim().notEmpty().withMessage('El nombre completo es requerido'),
+    body('cedula').trim().notEmpty().withMessage('El número de cédula es requerido'),
     body('role').isIn(['admin', 'student']),
     body('cohortId').optional(optionalFalsy).isUUID(),
-    body('cedula').optional(optionalFalsy).trim().isString(),
     body('gender').optional(optionalFalsy).isIn(['masculino', 'femenino']),
     body('scheduleId').optional(optionalFalsy).isUUID(),
     body('instructorId').optional(optionalFalsy).isUUID(),
@@ -59,18 +59,13 @@ router.post(
     const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
     const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : null;
 
-    if (role === 'student' && !cohortId) {
-      res.status(400).json({ error: 'Para estudiante selecciona un curso (Curso Tipo A/B Nro X). Créalo antes en Reportes por curso.' });
-      return;
-    }
-
     const result = await createUser({
       email,
       password,
       fullName,
       role,
       courseId: null,
-      cohortId: role === 'student' ? cohortId : null,
+      cohortId: role === 'student' ? (cohortId || null) : null,
       cedula: cedula?.trim() || null,
       gender: gender === 'masculino' || gender === 'femenino' ? gender : null,
       scheduleId: role === 'student' ? (scheduleId || null) : null,
@@ -152,13 +147,13 @@ router.patch(
     param('id').isUUID(),
     body('fullName').optional().trim().notEmpty(),
     body('role').optional().isIn(['admin', 'student']),
-    body('cohortId').optional().isUUID(),
+    body('cohortId').optional(optionalFalsy).isUUID(),
     body('cedula').optional().trim().isString(),
     body('gender').optional().isIn(['masculino', 'femenino']),
     body('scheduleId').optional().isUUID(),
     body('instructorId').optional().isUUID(),
     body('dayOfWeek').optional().isInt({ min: 1, max: 7 }),
-    body('startTime').optional().matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/),
+    body('startTime').optional(optionalFalsy).matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/),
     body('scheduleType').optional().isIn(['weekdays', 'weekends']),
     body('practiceWeeks').optional().toInt().isInt({ min: 1, max: 3 }),
     body('citizenship').optional().trim().isString().isLength({ max: 100 }),
@@ -396,7 +391,13 @@ router.get('/cohorts', async (req: AuthenticatedRequest, res: Response) => {
 
 router.post(
   '/cohorts',
-  [body('courseId').isUUID(), body('name').trim().notEmpty(), body('code').trim().notEmpty()],
+  [
+    body('courseId').isUUID(),
+    body('name').trim().notEmpty(),
+    body('code').trim().notEmpty(),
+    body('startDate').optional().trim().isString().isLength({ max: 20 }),
+    body('endDate').optional().trim().isString().isLength({ max: 20 }),
+  ],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -404,8 +405,41 @@ router.post(
       return;
     }
     try {
-      const cohort = await adminService.createCohort(req.body.courseId, req.body.name, req.body.code);
+      const { courseId, name, code, startDate, endDate } = req.body;
+      const cohort = await adminService.createCohort(courseId, name, code, startDate || null, endDate || null);
       res.status(201).json(cohort);
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.patch(
+  '/cohorts/:id',
+  [
+    param('id').isUUID(),
+    body('courseId').isUUID(),
+    body('name').trim().notEmpty(),
+    body('code').trim().notEmpty(),
+    body('startDate').optional().trim().isString().isLength({ max: 20 }),
+    body('endDate').optional().trim().isString().isLength({ max: 20 }),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    try {
+      const { courseId, name, code, startDate, endDate } = req.body;
+      const cohort = await adminService.updateCohort(req.params.id, {
+        courseId,
+        name,
+        code,
+        startDate: startDate || null,
+        endDate: endDate || null,
+      });
+      res.json(cohort);
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
     }
@@ -958,6 +992,7 @@ router.post(
     body('email').optional().trim().isString(),
     body('phone').optional().trim().isString(),
     body('isActive').optional().isBoolean(),
+    body('password').optional().isLength({ min: 6 }).withMessage('La contraseña debe tener al menos 6 caracteres'),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);
@@ -971,6 +1006,7 @@ router.post(
         email: req.body.email,
         phone: req.body.phone,
         isActive: req.body.isActive,
+        password: req.body.password,
       });
       res.status(201).json(instructor);
     } catch (e) {
@@ -987,6 +1023,7 @@ router.patch(
     body('email').optional().trim().isString(),
     body('phone').optional().trim().isString(),
     body('isActive').optional().isBoolean(),
+    body('password').optional().isLength({ min: 6 }).withMessage('La contraseña debe tener al menos 6 caracteres'),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);
@@ -1000,6 +1037,7 @@ router.patch(
         email: req.body.email,
         phone: req.body.phone,
         isActive: req.body.isActive,
+        password: req.body.password,
       });
       res.json(instructor);
     } catch (e) {

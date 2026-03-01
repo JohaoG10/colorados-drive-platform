@@ -134,7 +134,7 @@ export async function getInstructorScheduleWithOccupancy(
   return { free, occupied };
 }
 
-export async function listCourseSchedules(cohortId?: string) {
+export async function listCourseSchedules(cohortId?: string, instructorId?: string) {
   let query = supabaseAdmin
     .from('course_schedules')
     .select(
@@ -146,6 +146,9 @@ export async function listCourseSchedules(cohortId?: string) {
 
   if (cohortId) {
     query = query.eq('cohort_id', cohortId);
+  }
+  if (instructorId) {
+    query = query.eq('instructor_id', instructorId);
   }
 
   const { data, error } = await query;
