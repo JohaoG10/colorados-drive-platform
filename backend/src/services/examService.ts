@@ -325,10 +325,35 @@ export async function submitAttempt(
         studentTexts = [single];
       }
 
+      // Calificar sin importar el orden: cada respuesta del estudiante debe coincidir con una parte correcta (cualquiera)
       let allCorrect = true;
-      for (let i = 0; i < partsCount; i++) {
-        const models = modelParts[i] || [];
-        const studentNorm = normalizeForCompare(studentTexts[i] || '');
+      if (partsCount > 1) {
+        const studentNorm = studentTexts.map((t) => normalizeForCompare(t));
+        if (studentNorm.length !== partsCount) {
+          allCorrect = false;
+        } else {
+          const used = new Set<number>();
+          for (let i = 0; i < partsCount; i++) {
+            const models = modelParts[i] || [];
+            if (models.length === 0) continue;
+            let found = false;
+            for (let j = 0; j < studentNorm.length; j++) {
+              if (used.has(j)) continue;
+              if (models.some((m) => m === studentNorm[j])) {
+                used.add(j);
+                found = true;
+                break;
+              }
+            }
+            if (!found) {
+              allCorrect = false;
+              break;
+            }
+          }
+        }
+      } else {
+        const models = modelParts[0] || [];
+        const studentNorm = normalizeForCompare(studentTexts[0] || '');
         if (models.length > 0 && !models.some((m) => m === studentNorm)) allCorrect = false;
       }
       const textToStore = partsCount > 1 ? JSON.stringify(studentTexts) : (studentTexts[0] || null);
