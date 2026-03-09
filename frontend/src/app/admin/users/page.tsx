@@ -432,7 +432,7 @@ export default function AdminUsersPage() {
       dayOfWeek: s?.day_of_week ?? 0,
       startTime: s?.start_time ? (typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : String(s.start_time)) : '',
       practiceWeeks: (u.practice_weeks === 1 || u.practice_weeks === 2 || u.practice_weeks === 3) ? u.practice_weeks : '',
-      practiceHoursPerDay: (typeof u.practice_hours_per_day === 'number' && u.practice_hours_per_day >= 1 && u.practice_hours_per_day <= 4) ? u.practice_hours_per_day : 1,
+      practiceHoursPerDay: (typeof u.practice_hours_per_day === 'number' && u.practice_hours_per_day >= 1 && u.practice_hours_per_day <= 4) ? (u.practice_hours_per_day as 1 | 2 | 3 | 4) : 1,
       practiceStartDate: (u.practice_start_date ?? '').toString().slice(0, 10),
       practiceEndDate: (u.practice_end_date ?? '').toString().slice(0, 10),
       birthDate: (u.birth_date ?? '').toString().slice(0, 10),
