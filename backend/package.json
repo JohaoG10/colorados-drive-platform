@@ -38,12 +38,14 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "pdfkit": "^0.17.2",
     "typescript": "^5.3.3",
     "uuid": "^9.0.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/archiver": "^7.0.0",
+    "@types/pdfkit": "^0.17.5",
     "tsx": "^4.7.0"
   }
 }

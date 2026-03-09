@@ -140,6 +140,7 @@ export async function createUser(params: {
   startTime?: string | null;
   scheduleType?: 'weekdays' | 'weekends' | null;
   practiceWeeks?: 1 | 2 | 3 | null;
+  practiceHoursPerDay?: number; // 1-4, por defecto 1
   practiceStartDate?: string | null;
   practiceEndDate?: string | null;
   gender?: string | null;
@@ -199,17 +200,25 @@ export async function createUser(params: {
   let scheduleId: string | null = params.role === 'student' ? (params.scheduleId || null) : null;
   if (params.role === 'student' && cohortId && !scheduleId && params.instructorId && params.startTime) {
     const startTimeNorm = typeof params.startTime === 'string' ? params.startTime.slice(0, 5) : params.startTime;
+    const hoursPerDay = Math.min(4, Math.max(1, params.practiceHoursPerDay ?? 1));
     if (params.scheduleType === 'weekdays' || params.scheduleType === 'weekends') {
       try {
-        const { getOrCreateScheduleGroup } = await import('./scheduleService');
+        const { getOrCreateScheduleGroup, getAvailableStartTimes } = await import('./scheduleService');
+        const available = await getAvailableStartTimes(cohortId, params.instructorId, params.scheduleType, hoursPerDay, null);
+        const isAvailable = available.some((s) => s.start_time === startTimeNorm);
+        if (!isAvailable) {
+          await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
+          return { userId: '', error: 'El horario seleccionado no está disponible. Elige otra hora o duración.' };
+        }
         const { firstSlotId } = await getOrCreateScheduleGroup({
           cohortId,
           instructorId: params.instructorId,
           type: params.scheduleType,
           startTime: startTimeNorm,
+          hoursPerDay,
         });
         scheduleId = firstSlotId;
-      } catch {
+      } catch (err) {
         const { getOrCreateCourseSchedule } = await import('./scheduleService');
         const firstDay = params.scheduleType === 'weekends' ? 6 : 1;
         const schedule = await getOrCreateCourseSchedule({
@@ -276,16 +285,21 @@ export async function createUser(params: {
     must_change_password: params.mustChangePassword ?? true,
   };
   if (practiceWeeksVal != null) profileRow.practice_weeks = practiceWeeksVal;
+  const hoursPerDayVal = params.role === 'student' && params.practiceHoursPerDay != null
+    ? Math.min(4, Math.max(1, params.practiceHoursPerDay))
+    : 1;
+  if (params.role === 'student') profileRow.practice_hours_per_day = hoursPerDayVal;
   if (practiceStartDate) profileRow.practice_start_date = practiceStartDate;
   if (practiceEndDate) profileRow.practice_end_date = practiceEndDate;
 
   const { error: profileError } = await supabaseAdmin.from('user_profiles').insert(profileRow);
   if (profileError) {
-    if (/practice_weeks|practice_start_date|practice_end_date|gender|column.*does not exist/i.test(profileError.message)) {
+    if (/practice_weeks|practice_start_date|practice_end_date|gender|practice_hours_per_day|column.*does not exist/i.test(profileError.message)) {
       delete profileRow.practice_weeks;
       delete profileRow.practice_start_date;
       delete profileRow.practice_end_date;
       delete profileRow.gender;
+      delete profileRow.practice_hours_per_day;
       const { error: retryError } = await supabaseAdmin.from('user_profiles').insert(profileRow);
       if (retryError) {
         await supabaseAdmin.auth.admin.deleteUser(authData.user.id);
@@ -344,6 +358,7 @@ export async function updateUserProfile(
     startTime?: string | null;
     scheduleType?: 'weekdays' | 'weekends' | null;
     practiceWeeks?: 1 | 2 | 3 | null;
+    practiceHoursPerDay?: number | null;
     citizenship?: string | null;
     bloodType?: string | null;
     birthDate?: string | null;
@@ -406,18 +421,26 @@ export async function updateUserProfile(
   if (params.practiceWeeks !== undefined) {
     update.practice_weeks = params.practiceWeeks === 1 || params.practiceWeeks === 2 || params.practiceWeeks === 3 ? params.practiceWeeks : null;
   }
+  if (params.practiceHoursPerDay !== undefined) {
+    update.practice_hours_per_day = params.practiceHoursPerDay != null && params.practiceHoursPerDay >= 1 && params.practiceHoursPerDay <= 4 ? params.practiceHoursPerDay : 1;
+  }
   if (params.instructorId != null && params.startTime && params.cohortId) {
     const cohortId = params.cohortId;
     const startTime = typeof params.startTime === 'string' && params.startTime.length >= 5 ? params.startTime.slice(0, 5) : params.startTime;
+    const hoursPerDay = Math.min(4, Math.max(1, params.practiceHoursPerDay ?? 1));
     const { data: currentProfile } = await supabaseAdmin.from('user_profiles').select('schedule_id').eq('id', userId).single();
     const currentScheduleId = (currentProfile as { schedule_id?: string | null } | null)?.schedule_id ?? null;
     if (params.scheduleType === 'weekdays' || params.scheduleType === 'weekends') {
-      const { getOrCreateScheduleGroup } = await import('./scheduleService');
+      const { getOrCreateScheduleGroup, getAvailableStartTimes } = await import('./scheduleService');
+      const available = await getAvailableStartTimes(cohortId, params.instructorId, params.scheduleType, hoursPerDay, currentScheduleId);
+      const isAvailable = available.some((s) => s.start_time === startTime);
+      if (!isAvailable) return { error: 'El horario seleccionado no está disponible. Elige otra hora o duración.' };
       const { firstSlotId } = await getOrCreateScheduleGroup({
         cohortId,
         instructorId: params.instructorId,
         type: params.scheduleType,
         startTime,
+        hoursPerDay,
       });
       update.schedule_id = firstSlotId;
       update._oldScheduleIdForCleanup = currentScheduleId;

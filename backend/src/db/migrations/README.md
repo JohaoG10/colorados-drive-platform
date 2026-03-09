@@ -14,6 +14,10 @@ Estas migraciones deben ejecutarse **en el SQL Editor de Supabase** (Dashboard �
 8. `016_user_gender.sql` — género en user_profiles.
 9. `017_instructor_login.sql` — login para instructores.
 10. `018_cohort_start_end_dates.sql` — fechas de inicio y término del curso a nivel de número de curso (cohort); al inscribir un estudiante se copian a su perfil.
+11. `019_exam_training_definitive_extra_attempts.sql` — exam_kind (training/definitive), exam_availability (habilitar definitivo por cohort), exam_extra_attempts (otorgar intento extra a un estudiante).
+12. `020_exam_attempt_is_definitive.sql` — is_definitive en exam_attempts: mismo examen para práctica y definitivo; cada intento se marca como práctica o definitivo.
+13. `021_cash_sessions_and_transactions.sql` — módulo Caja: sesiones diarias (apertura/cierre) y movimientos (ingresos/egresos).
+14. `022_cash_anulado_and_audit.sql` — anulación de movimientos (soft delete) y tabla de auditoría para ediciones/anulaciones con código de administrador. Opcional: variable de entorno `CASH_ADMIN_CODE` (por defecto 3651).
 
 ## Cómo aplicar la migración 010 (precio y pagos)
 

@@ -42,9 +42,11 @@ export default function TakeExamPage() {
     if (!token || !examId) return;
     setLoading(true);
     setError('');
+    const definitive = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'definitive';
     fetch(`${API_URL}/api/student/exams/${examId}/start`, {
       method: 'POST',
-      headers: getAuthHeaders(token),
+      headers: { ...getAuthHeaders(token), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ definitive }),
     })
       .then((r) => r.json())
       .then((data) => {

@@ -41,7 +41,7 @@ export async function createContent(
   return data;
 }
 
-const EXTRA_PROFILE_COLUMNS = 'birth_date, address, phone, start_date, end_date, modality, practice_weeks, practice_start_date, practice_end_date';
+const EXTRA_PROFILE_COLUMNS = 'birth_date, address, phone, start_date, end_date, modality, practice_weeks, practice_start_date, practice_end_date, practice_hours_per_day';
 const isExtraColumnsError = (err: unknown) => {
   const msg = err instanceof Error ? err.message : String(err);
   return /birth_date|address|phone|start_date|end_date|modality|practice_start_date|practice_end_date|gender|schema|does not exist/i.test(msg);

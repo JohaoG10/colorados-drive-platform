@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAuthHeaders, triggerSessionExpired } from '@/lib/api';
 
@@ -42,6 +43,7 @@ interface UserRow {
   practice_weeks?: number | null;
   practice_start_date?: string | null;
   practice_end_date?: string | null;
+  practice_hours_per_day?: number | null;
   created_at: string;
 }
 
@@ -55,6 +57,7 @@ interface PaymentRow {
 
 export default function AdminUsersPage() {
   const { token } = useAuth();
+  const searchParams = useSearchParams();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [courses, setCourses] = useState<{ id: string; name: string; code: string; price?: number }[]>([]);
   const [cohorts, setCohorts] = useState<{ id: string; name: string; code: string; course_id: string; courses?: { name: string } }[]>([]);
@@ -63,7 +66,9 @@ export default function AdminUsersPage() {
   const [apiError, setApiError] = useState('');
   const [instructors, setInstructors] = useState<{ id: string; full_name: string; email: string | null; is_active: boolean }[]>([]);
   const [availableSlots, setAvailableSlots] = useState<{ day_of_week: number; start_time: string }[]>([]);
+  const [availableStartBlocks, setAvailableStartBlocks] = useState<{ start_time: string; end_time: string }[]>([]);
   const [editAvailableSlots, setEditAvailableSlots] = useState<{ day_of_week: number; start_time: string }[]>([]);
+  const [editAvailableStartBlocks, setEditAvailableStartBlocks] = useState<{ start_time: string; end_time: string }[]>([]);
   const [filterCohortId, setFilterCohortId] = useState('');
   const [filterRole, setFilterRole] = useState<'student' | 'instructor' | 'admin' | ''>('student');
   const [form, setForm] = useState<{
@@ -72,12 +77,14 @@ export default function AdminUsersPage() {
     practiceStartDate: string; practiceEndDate: string;
     role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string;
     scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string; practiceWeeks: 1 | 2 | 3 | '';
+    practiceHoursPerDay: 1 | 2 | 3 | 4;
     paymentType: 'full' | 'partial'; initialPaymentAmount: string;
   }>({
     email: '', password: '', fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '',
     birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '',
     practiceStartDate: '', practiceEndDate: '',
     role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '',
+    practiceHoursPerDay: 1,
     paymentType: 'partial', initialPaymentAmount: '',
   });
   const [error, setError] = useState('');
@@ -100,17 +107,20 @@ export default function AdminUsersPage() {
     role: 'admin' | 'student'; courseId: string; cohortId: string; instructorId: string;
     scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string;
     practiceWeeks: 1 | 2 | 3 | ''; practiceStartDate: string; practiceEndDate: string;
+    practiceHoursPerDay: 1 | 2 | 3 | 4;
     birthDate: string; address: string; phone: string; startDate: string; endDate: string; modality: string;
     password: string;
   }>({
     fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '',
     role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '',
     practiceStartDate: '', practiceEndDate: '',
+    practiceHoursPerDay: 1,
     birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '',
     password: '',
   });
   const [editError, setEditError] = useState('');
   const [editSuccess, setEditSuccess] = useState('');
+  const appliedEnrollmentParamsRef = useRef(false);
 
   const load = (roleOverride?: 'student' | 'instructor' | 'admin' | '') => {
     if (!token) return;
@@ -159,35 +169,85 @@ export default function AdminUsersPage() {
     }
   }, [token]);
 
+  /** Prellenar formulario de inscripción desde Horarios por curso (query params). */
+  useEffect(() => {
+    if (appliedEnrollmentParamsRef.current) return;
+    const cohortId = searchParams.get('cohortId');
+    const instructorId = searchParams.get('instructorId');
+    const scheduleType = searchParams.get('scheduleType') as 'weekdays' | 'weekends' | 'single' | null;
+    const startTime = searchParams.get('startTime');
+    if (!cohortId || !instructorId || !startTime || cohorts.length === 0) return;
+    const cohort = cohorts.find((c) => c.id === cohortId);
+    if (!cohort) return;
+    appliedEnrollmentParamsRef.current = true;
+    setForm((prev) => ({
+      ...prev,
+      role: 'student',
+      courseId: cohort.course_id,
+      cohortId,
+      instructorId,
+      scheduleType: scheduleType === 'weekdays' || scheduleType === 'weekends' || scheduleType === 'single' ? scheduleType : 'weekdays',
+      startTime: startTime.slice(0, 5),
+      dayOfWeek: 0,
+    }));
+    setShowForm(true);
+  }, [searchParams, cohorts]);
+
   useEffect(() => {
     if (!token || !form.cohortId || !form.instructorId) {
       setAvailableSlots([]);
+      setAvailableStartBlocks([]);
       return;
     }
-    fetch(`${API_URL}/api/admin/available-slots?cohortId=${encodeURIComponent(form.cohortId)}&instructorId=${encodeURIComponent(form.instructorId)}`, { headers: getAuthHeaders(token) })
-      .then((r) => r.json())
-      .then((data) => setAvailableSlots(Array.isArray(data?.slots) ? data.slots : []))
-      .catch(() => setAvailableSlots([]));
-  }, [token, form.cohortId, form.instructorId]);
+    const scheduleType = form.scheduleType === 'weekdays' || form.scheduleType === 'weekends' ? form.scheduleType : null;
+    const hoursPerDay = form.practiceHoursPerDay ?? 1;
+    if (scheduleType) {
+      const url = `${API_URL}/api/admin/available-slots?cohortId=${encodeURIComponent(form.cohortId)}&instructorId=${encodeURIComponent(form.instructorId)}&scheduleType=${scheduleType}&hoursPerDay=${hoursPerDay}`;
+      fetch(url, { headers: getAuthHeaders(token) })
+        .then((r) => r.json())
+        .then((data) => setAvailableStartBlocks(Array.isArray(data?.slots) ? data.slots : []))
+        .catch(() => setAvailableStartBlocks([]));
+      setAvailableSlots([]);
+    } else {
+      fetch(`${API_URL}/api/admin/available-slots?cohortId=${encodeURIComponent(form.cohortId)}&instructorId=${encodeURIComponent(form.instructorId)}`, { headers: getAuthHeaders(token) })
+        .then((r) => r.json())
+        .then((data) => setAvailableSlots(Array.isArray(data?.slots) ? data.slots : []))
+        .catch(() => setAvailableSlots([]));
+      setAvailableStartBlocks([]);
+    }
+  }, [token, form.cohortId, form.instructorId, form.scheduleType, form.practiceHoursPerDay]);
 
   useEffect(() => {
     if (!token || !editModal || !editForm.cohortId || !editForm.instructorId) {
       setEditAvailableSlots([]);
+      setEditAvailableStartBlocks([]);
       return;
     }
     const currentScheduleId = editModal?.schedule_id ?? undefined;
-    const q = `cohortId=${encodeURIComponent(editForm.cohortId)}&instructorId=${encodeURIComponent(editForm.instructorId)}${currentScheduleId ? `&currentScheduleId=${encodeURIComponent(currentScheduleId)}` : ''}`;
-    fetch(`${API_URL}/api/admin/available-slots?${q}`, { headers: getAuthHeaders(token) })
-      .then((r) => r.json())
-      .then((data) => {
-        const slots = Array.isArray(data?.slots) ? data.slots : [];
-        const current = editForm.dayOfWeek && editForm.startTime ? [{ day_of_week: editForm.dayOfWeek, start_time: editForm.startTime }] : [];
-        const currentKey = `${editForm.dayOfWeek}-${editForm.startTime}`;
-        const inSlots = slots.some((s: { day_of_week: number; start_time: string }) => `${s.day_of_week}-${s.start_time}` === currentKey);
-        setEditAvailableSlots(inSlots ? slots : [...current, ...slots]);
-      })
-      .catch(() => setEditAvailableSlots([]));
-  }, [token, editModal, editForm.cohortId, editForm.instructorId, editForm.dayOfWeek, editForm.startTime]);
+    const scheduleType = editForm.scheduleType === 'weekdays' || editForm.scheduleType === 'weekends' ? editForm.scheduleType : null;
+    const hoursPerDay = editForm.practiceHoursPerDay ?? 1;
+    if (scheduleType) {
+      const q = `cohortId=${encodeURIComponent(editForm.cohortId)}&instructorId=${encodeURIComponent(editForm.instructorId)}&scheduleType=${scheduleType}&hoursPerDay=${hoursPerDay}${currentScheduleId ? `&currentScheduleId=${encodeURIComponent(currentScheduleId)}` : ''}`;
+      fetch(`${API_URL}/api/admin/available-slots?${q}`, { headers: getAuthHeaders(token) })
+        .then((r) => r.json())
+        .then((data) => setEditAvailableStartBlocks(Array.isArray(data?.slots) ? data.slots : []))
+        .catch(() => setEditAvailableStartBlocks([]));
+      setEditAvailableSlots([]);
+    } else {
+      const q = `cohortId=${encodeURIComponent(editForm.cohortId)}&instructorId=${encodeURIComponent(editForm.instructorId)}${currentScheduleId ? `&currentScheduleId=${encodeURIComponent(currentScheduleId)}` : ''}`;
+      fetch(`${API_URL}/api/admin/available-slots?${q}`, { headers: getAuthHeaders(token) })
+        .then((r) => r.json())
+        .then((data) => {
+          const slots = Array.isArray(data?.slots) ? data.slots : [];
+          const current = editForm.dayOfWeek && editForm.startTime ? [{ day_of_week: editForm.dayOfWeek, start_time: editForm.startTime }] : [];
+          const currentKey = `${editForm.dayOfWeek}-${editForm.startTime}`;
+          const inSlots = slots.some((s: { day_of_week: number; start_time: string }) => `${s.day_of_week}-${s.start_time}` === currentKey);
+          setEditAvailableSlots(inSlots ? slots : [...current, ...slots]);
+        })
+        .catch(() => setEditAvailableSlots([]));
+      setEditAvailableStartBlocks([]);
+    }
+  }, [token, editModal, editForm.cohortId, editForm.instructorId, editForm.dayOfWeek, editForm.startTime, editForm.scheduleType, editForm.practiceHoursPerDay]);
 
   useEffect(() => {
     if (activityModal && token) {
@@ -287,6 +347,9 @@ export default function AdminUsersPage() {
       if (form.role === 'student' && initialPaymentAmount !== undefined) {
         body.initialPaymentAmount = initialPaymentAmount;
       }
+      if (form.role === 'student' && (form.practiceHoursPerDay ?? 1) >= 1 && (form.practiceHoursPerDay ?? 1) <= 4) {
+        body.practiceHoursPerDay = form.practiceHoursPerDay ?? 1;
+      }
       const res = await fetch(`${API_URL}/api/admin/users`, {
         method: 'POST',
         headers: { ...getAuthHeaders(token!), 'Content-Type': 'application/json' },
@@ -299,7 +362,7 @@ export default function AdminUsersPage() {
         throw new Error(msg);
       }
       setSuccess('Usuario creado');
-      setForm({ email: '', password: '', fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '', birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '', practiceStartDate: '', practiceEndDate: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', paymentType: 'partial', initialPaymentAmount: '' });
+      setForm({ email: '', password: '', fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '', birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '', practiceStartDate: '', practiceEndDate: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', practiceHoursPerDay: 1, paymentType: 'partial', initialPaymentAmount: '' });
       setShowForm(false);
       load();
     } catch (err) {
@@ -369,6 +432,7 @@ export default function AdminUsersPage() {
       dayOfWeek: s?.day_of_week ?? 0,
       startTime: s?.start_time ? (typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : String(s.start_time)) : '',
       practiceWeeks: (u.practice_weeks === 1 || u.practice_weeks === 2 || u.practice_weeks === 3) ? u.practice_weeks : '',
+      practiceHoursPerDay: (typeof u.practice_hours_per_day === 'number' && u.practice_hours_per_day >= 1 && u.practice_hours_per_day <= 4) ? u.practice_hours_per_day : 1,
       practiceStartDate: (u.practice_start_date ?? '').toString().slice(0, 10),
       practiceEndDate: (u.practice_end_date ?? '').toString().slice(0, 10),
       birthDate: (u.birth_date ?? '').toString().slice(0, 10),
@@ -393,7 +457,7 @@ export default function AdminUsersPage() {
       return;
     }
     try {
-      const body: { fullName?: string; role?: string; cohortId?: string | null; cedula?: string | null; gender?: string | null; instructorId?: string; dayOfWeek?: number; startTime?: string; scheduleType?: string; practiceWeeks?: number; practiceStartDate?: string | null; practiceEndDate?: string | null; citizenship?: string | null; bloodType?: string | null; birthDate?: string | null; address?: string | null; phone?: string | null; startDate?: string | null; endDate?: string | null; modality?: string | null; password?: string } = {
+      const body: { fullName?: string; role?: string; cohortId?: string | null; cedula?: string | null; gender?: string | null; instructorId?: string; dayOfWeek?: number; startTime?: string; scheduleType?: string; practiceWeeks?: number; practiceHoursPerDay?: number; practiceStartDate?: string | null; practiceEndDate?: string | null; citizenship?: string | null; bloodType?: string | null; birthDate?: string | null; address?: string | null; phone?: string | null; startDate?: string | null; endDate?: string | null; modality?: string | null; password?: string } = {
         fullName: editForm.fullName.trim(),
         role: editForm.role,
         cohortId: editForm.cohortId || null,
@@ -404,6 +468,7 @@ export default function AdminUsersPage() {
         startTime: editForm.role === 'student' ? editForm.startTime || undefined : undefined,
         scheduleType: editForm.role === 'student' ? (editForm.scheduleType === 'single' ? (editForm.dayOfWeek >= 6 ? 'weekends' : 'weekdays') : (editForm.scheduleType === 'weekdays' || editForm.scheduleType === 'weekends' ? editForm.scheduleType : undefined)) : undefined,
         practiceWeeks: undefined,
+        practiceHoursPerDay: editForm.role === 'student' && (editForm.practiceHoursPerDay >= 1 && editForm.practiceHoursPerDay <= 4) ? editForm.practiceHoursPerDay : undefined,
         practiceStartDate: editForm.role === 'student' ? (editForm.practiceStartDate.trim() || null) : undefined,
         practiceEndDate: editForm.role === 'student' ? (editForm.practiceEndDate.trim() || null) : undefined,
         citizenship: editForm.citizenship.trim() || null,
@@ -661,7 +726,7 @@ export default function AdminUsersPage() {
                 </div>
                 <div>
                   <label className="form-label">Rol *</label>
-                  <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as 'admin' | 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '' })} className="form-select">
+                  <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as 'admin' | 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', practiceHoursPerDay: 1 })} className="form-select">
                     <option value="admin">Administrador</option>
                     <option value="student">Estudiante</option>
                   </select>
@@ -711,7 +776,7 @@ export default function AdminUsersPage() {
                     <label className="form-label">Modalidad de prácticas</label>
                     <select
                       value={form.scheduleType}
-                      onChange={(e) => setForm({ ...form, scheduleType: e.target.value as 'weekdays' | 'weekends', startTime: form.startTime })}
+                      onChange={(e) => setForm({ ...form, scheduleType: e.target.value as 'weekdays' | 'weekends', startTime: '' })}
                       className="form-select"
                       disabled={!form.instructorId}
                     >
@@ -721,16 +786,51 @@ export default function AdminUsersPage() {
                     <p className="mt-1 text-xs text-neutral-500">Las prácticas serán en ese rango de fechas (inicio y término) en esta modalidad.</p>
                   </div>
                   <div>
+                    <label className="form-label">Horas por día</label>
+                    <select
+                      value={form.practiceHoursPerDay}
+                      onChange={(e) => setForm({ ...form, practiceHoursPerDay: Number(e.target.value) as 1 | 2 | 3 | 4, startTime: '' })}
+                      className="form-select"
+                      disabled={!form.instructorId}
+                    >
+                      <option value={1}>1 hora</option>
+                      <option value={2}>2 horas</option>
+                      <option value={3}>3 horas</option>
+                      <option value={4}>4 horas</option>
+                    </select>
+                    <p className="mt-1 text-xs text-neutral-500">Duración diaria de prácticas (bloque consecutivo).</p>
+                  </div>
+                  <div>
                     <label className="form-label">Hora (inicio)</label>
                     <select
                       value={form.startTime}
                       onChange={(e) => setForm({ ...form, startTime: e.target.value })}
                       className="form-select"
+                      disabled={!form.instructorId}
                     >
-                      <option value="">06:00 - 23:00 (opcional)</option>
-                      {Array.from({ length: 18 }, (_, i) => `${String(i + 6).padStart(2, '0')}:00`).map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
+                      {!form.instructorId ? (
+                        <option value="">Selecciona un instructor para ver horarios disponibles</option>
+                      ) : (form.scheduleType === 'weekdays' || form.scheduleType === 'weekends') ? (
+                        availableStartBlocks.length === 0 ? (
+                          <option value="">No hay horarios disponibles para este instructor con la duración seleccionada</option>
+                        ) : (
+                          <>
+                            <option value="">Elegir hora de inicio</option>
+                            {availableStartBlocks.map((b) => (
+                              <option key={`${b.start_time}-${b.end_time}`} value={b.start_time}>
+                                {b.start_time} – {b.end_time}
+                              </option>
+                            ))}
+                          </>
+                        )
+                      ) : (
+                        <>
+                          <option value="">06:00 - 23:00 (opcional)</option>
+                          {Array.from({ length: 18 }, (_, i) => `${String(i + 6).padStart(2, '0')}:00`).map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </>
+                      )}
                     </select>
                   </div>
                 </div>
@@ -784,59 +884,79 @@ export default function AdminUsersPage() {
         {loading ? (
           <div className="p-8 text-center text-neutral-500">Cargando...</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table-pro min-w-[640px]">
+          <div className="overflow-x-auto -mx-2 sm:mx-0">
+            <table className="table-pro min-w-[480px] w-full">
             <thead>
               <tr>
-                <th>Usuario</th>
-                <th>Cédula</th>
-                <th>Rol</th>
-                <th>Curso</th>
-                <th>Horario</th>
-                <th>Debe</th>
-                <th>Actividad</th>
-                <th>Registro</th>
-                <th className="w-40">Acciones</th>
+                <th className="!pl-6 !pr-8 !py-4 w-[min(220px,35%)]">Usuario</th>
+                <th className="!px-6 !py-4">Curso</th>
+                <th className="!px-6 !py-4">Horario</th>
+                <th className="!px-6 !py-4 text-center w-36 min-w-[120px]">Debe</th>
+                <th className="!px-6 !py-4">Actividad</th>
+                <th className="!pr-6 !pl-4 !py-4 w-40 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr key={u.id}>
-                  <td>
-                    <p className="font-medium">{u.full_name || u.email}</p>
-                    <p className="text-sm text-neutral-500">{u.email}</p>
+              {users.map((u) => {
+                const debe = u.role === 'student' && (u.total_amount != null || u.amount_paid != null)
+                  ? Math.max(0, (Number(u.total_amount) || 0) - (Number(u.amount_paid) || 0))
+                  : null;
+                const debeIsZero = debe !== null && debe === 0;
+                return (
+                <tr key={u.id} className="border-b border-neutral-100 hover:bg-neutral-50/80">
+                  <td className="!pl-6 !pr-8 !py-5 align-top">
+                    <p className="font-semibold text-neutral-900 text-[15px] leading-tight">{u.full_name || u.email}</p>
+                    <p className="text-sm text-neutral-500 mt-0.5">{u.email}</p>
                   </td>
-                  <td className="cell-muted">{u.cedula || '-'}</td>
-                  <td>
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${u.role === 'admin' ? 'bg-red-100 text-red-800' : 'bg-neutral-100'}`}>{u.role}</span>
+                  <td className="!px-6 !py-5 text-neutral-600 text-sm">{getAssignation(u)}</td>
+                  <td className="!px-6 !py-5 text-neutral-600 text-sm">{u.role === 'student' ? getScheduleLabel(u) : '-'}</td>
+                  <td className="!px-6 !py-5 w-36 min-w-[120px] align-top">
+                    <div className="flex justify-center w-full">
+                      {debe === null ? (
+                        <span className="text-neutral-400 text-sm">-</span>
+                      ) : debeIsZero ? (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                          Al día
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+                          Debe ${debe.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
                   </td>
-                  <td className="cell-muted">{getAssignation(u)}</td>
-                  <td className="cell-muted text-sm">{u.role === 'student' ? getScheduleLabel(u) : '-'}</td>
-                  <td className="cell-muted text-sm">
-                    {u.role === 'student' && (u.total_amount != null || u.amount_paid != null)
-                      ? `$${Math.max(0, (Number(u.total_amount) || 0) - (Number(u.amount_paid) || 0)).toFixed(2)}`
-                      : '-'}
-                  </td>
-                  <td>
+                  <td className="!px-6 !py-5">
                     {u.role === 'student' && (
-                      <button onClick={() => setActivityModal({ userId: u.id, name: u.full_name || u.email })} className="text-red-600 hover:underline text-sm">
+                      <button
+                        onClick={() => setActivityModal({ userId: u.id, name: u.full_name || u.email })}
+                        className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-700 hover:underline text-sm font-medium transition-colors"
+                      >
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
                         Ver actividad
                       </button>
                     )}
                   </td>
-                  <td className="cell-muted text-sm">{u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
-                  <td className="cell-actions">
-                    <div className="flex flex-wrap gap-2">
-                      <button onClick={() => setUserDetailModal(u)} className="inline-flex items-center gap-1 text-red-600 hover:underline text-sm">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                  <td className="!pr-6 !pl-4 !py-5 text-right">
+                    <div className="flex flex-wrap gap-4 justify-end">
+                      <button onClick={() => setUserDetailModal(u)} className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-700 hover:underline text-sm font-medium transition-colors">
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                         Ver todo
                       </button>
-                      <button onClick={() => openEdit(u)} className="text-red-600 hover:underline text-sm">Editar</button>
-                      <button onClick={() => deleteUser(u)} className="text-neutral-600 hover:underline text-sm">Eliminar</button>
+                      <button onClick={() => openEdit(u)} className="inline-flex items-center gap-1.5 text-amber-600 hover:text-amber-700 hover:underline text-sm font-medium transition-colors">
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                        Editar
+                      </button>
+                      <button onClick={() => deleteUser(u)} className="inline-flex items-center gap-1.5 text-red-600 hover:text-red-700 hover:underline text-sm font-medium transition-colors">
+                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        Eliminar
+                      </button>
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
             </table>
           </div>
@@ -1069,18 +1189,46 @@ export default function AdminUsersPage() {
                   </div>
                   <div>
                     <label className="form-label">Modalidad de prácticas</label>
-                    <select value={editForm.scheduleType === 'single' ? (editForm.dayOfWeek >= 6 ? 'weekends' : 'weekdays') : editForm.scheduleType} onChange={(e) => setEditForm({ ...editForm, scheduleType: e.target.value as 'weekdays' | 'weekends' })} className="form-select" disabled={!editForm.instructorId}>
+                    <select value={editForm.scheduleType === 'single' ? (editForm.dayOfWeek >= 6 ? 'weekends' : 'weekdays') : editForm.scheduleType} onChange={(e) => setEditForm({ ...editForm, scheduleType: e.target.value as 'weekdays' | 'weekends', startTime: '' })} className="form-select" disabled={!editForm.instructorId}>
                       <option value="weekdays">Lunes a Viernes</option>
                       <option value="weekends">Fines de semana</option>
                     </select>
                   </div>
                   <div>
-                    <label className="form-label">Hora</label>
-                    <select value={editForm.startTime} onChange={(e) => setEditForm({ ...editForm, startTime: e.target.value })} className="form-select">
-                      <option value="">06:00 - 23:00</option>
-                      {Array.from({ length: 18 }, (_, i) => `${String(i + 6).padStart(2, '0')}:00`).map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
+                    <label className="form-label">Horas por día</label>
+                    <select value={editForm.practiceHoursPerDay} onChange={(e) => setEditForm({ ...editForm, practiceHoursPerDay: Number(e.target.value) as 1 | 2 | 3 | 4, startTime: '' })} className="form-select" disabled={!editForm.instructorId}>
+                      <option value={1}>1 hora</option>
+                      <option value={2}>2 horas</option>
+                      <option value={3}>3 horas</option>
+                      <option value={4}>4 horas</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label">Hora (inicio)</label>
+                    <select value={editForm.startTime} onChange={(e) => setEditForm({ ...editForm, startTime: e.target.value })} className="form-select" disabled={!editForm.instructorId}>
+                      {!editForm.instructorId ? (
+                        <option value="">Selecciona un instructor para ver horarios disponibles</option>
+                      ) : (editForm.scheduleType === 'weekdays' || editForm.scheduleType === 'weekends') ? (
+                        editAvailableStartBlocks.length === 0 ? (
+                          <option value="">No hay horarios disponibles para este instructor con la duración seleccionada</option>
+                        ) : (
+                          <>
+                            <option value="">Elegir hora de inicio</option>
+                            {editAvailableStartBlocks.map((b) => (
+                              <option key={`${b.start_time}-${b.end_time}`} value={b.start_time}>
+                                {b.start_time} – {b.end_time}
+                              </option>
+                            ))}
+                          </>
+                        )
+                      ) : (
+                        <>
+                          <option value="">06:00 - 23:00</option>
+                          {Array.from({ length: 18 }, (_, i) => `${String(i + 6).padStart(2, '0')}:00`).map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </>
+                      )}
                     </select>
                   </div>
                 </>

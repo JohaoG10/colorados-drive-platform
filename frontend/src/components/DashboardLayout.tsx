@@ -29,6 +29,10 @@ export function DashboardLayout({
 
   const pageTitles: [string, string][] = [
     ['/admin/notifications', 'Avisos'],
+    ['/admin/caja/movimientos', 'Movimientos'],
+    ['/admin/caja/cerrar', 'Cerrar caja'],
+    ['/admin/caja/reportes', 'Reportes'],
+    ['/admin/caja', 'Caja'],
     ['/admin/exams', 'Exámenes'],
     ['/admin/promotions', 'Reportes por curso'],
     ['/admin/courses', 'Cursos y materias'],

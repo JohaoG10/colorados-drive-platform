@@ -15,6 +15,7 @@ const navItems = [
   { href: '/admin/courses', label: 'Cursos y materias', icon: <CoursesIcon /> },
   { href: '/admin/promotions', label: 'Reportes por curso', icon: <PromoIcon /> },
   { href: '/admin/exams', label: 'Exámenes', icon: <ExamIcon /> },
+  { href: '/admin/caja', label: 'Caja', icon: <CashIcon /> },
   { href: '/admin/notifications', label: 'Avisos', icon: <NotificationsIcon /> },
 ];
 
@@ -62,6 +63,14 @@ function ExamIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+    </svg>
+  );
+}
+
+function CashIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2h-2m-4-1V7a2 2 0 012-2h2a2 2 0 012 2v1m-4 0h10M8 13h8" />
     </svg>
   );
 }

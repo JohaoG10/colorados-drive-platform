@@ -11,6 +11,8 @@ export interface CreateExamParams {
   durationMinutes?: number | null;
   /** Número máximo de intentos por usuario (default 1) */
   maxAttempts?: number;
+  /** training = práctica siempre visible; definitive = habilitado por cohort */
+  examKind?: 'training' | 'definitive';
 }
 
 export type QuestionType = 'multiple_choice' | 'open_text';
@@ -41,6 +43,7 @@ export async function createExam(params: CreateExamParams) {
       passing_score: params.passingScore ?? 70,
       duration_minutes: params.durationMinutes ?? null,
       max_attempts: params.maxAttempts ?? 1,
+      exam_kind: params.examKind ?? 'training',
     })
     .select()
     .single();
@@ -52,6 +55,115 @@ export async function createExam(params: CreateExamParams) {
 export async function deleteExam(id: string) {
   const { error } = await supabaseAdmin.from('exams').delete().eq('id', id);
   if (error) throw new Error(error.message);
+}
+
+export async function getExam(id: string) {
+  const { data, error } = await supabaseAdmin
+    .from('exams')
+    .select('id, title, description, subject_id, course_id, question_count, passing_score, duration_minutes, max_attempts, exam_kind, created_at, updated_at')
+    .eq('id', id)
+    .single();
+  if (error || !data) throw new Error('Exam not found');
+  return data;
+}
+
+export interface UpdateExamParams {
+  title?: string;
+  description?: string | null;
+  questionCount?: number;
+  passingScore?: number;
+  durationMinutes?: number | null;
+  maxAttempts?: number;
+  examKind?: 'training' | 'definitive';
+}
+
+export async function updateExam(id: string, params: UpdateExamParams) {
+  const update: Record<string, unknown> = {};
+  if (params.title !== undefined) update.title = params.title.trim();
+  if (params.description !== undefined) update.description = params.description?.trim() || null;
+  if (params.questionCount !== undefined) update.question_count = params.questionCount;
+  if (params.passingScore !== undefined) update.passing_score = params.passingScore;
+  if (params.durationMinutes !== undefined) update.duration_minutes = params.durationMinutes ?? null;
+  if (params.maxAttempts !== undefined) update.max_attempts = params.maxAttempts;
+  if (params.examKind !== undefined) update.exam_kind = params.examKind;
+  if (Object.keys(update).length === 0) return getExam(id);
+  const { data, error } = await supabaseAdmin
+    .from('exams')
+    .update({ ...update, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/** Número de intentos extra concedidos a este usuario en este examen */
+export async function getExtraAttemptsCount(examId: string, userId: string): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from('exam_extra_attempts')
+    .select('id', { count: 'exact', head: true })
+    .eq('exam_id', examId)
+    .eq('user_id', userId);
+  if (error) return 0;
+  return count ?? 0;
+}
+
+/** Concede un intento extra a un estudiante (ej. supletorio) */
+export async function grantExtraAttempt(examId: string, userId: string, grantedBy: string | null) {
+  const { error } = await supabaseAdmin
+    .from('exam_extra_attempts')
+    .insert({ exam_id: examId, user_id: userId, granted_by: grantedBy });
+  if (error) throw new Error(error.message);
+}
+
+/** Cohorts para los que el examen definitivo está habilitado */
+export async function listExamAvailability(examId: string): Promise<{ cohortId: string; cohortName: string; cohortCode: string; enabledAt: string }[]> {
+  const { data: rows, error } = await supabaseAdmin
+    .from('exam_availability')
+    .select('cohort_id, enabled_at')
+    .eq('exam_id', examId);
+  if (error) return [];
+  if (!rows?.length) return [];
+  const cohortIds = [...new Set(rows.map((r) => r.cohort_id))];
+  const { data: cohorts } = await supabaseAdmin
+    .from('cohorts')
+    .select('id, name, code')
+    .in('id', cohortIds);
+  const byId = new Map((cohorts || []).map((c) => [c.id, c]));
+  return rows.map((r) => {
+    const c = byId.get(r.cohort_id);
+    return {
+      cohortId: r.cohort_id,
+      cohortName: c?.name ?? '',
+      cohortCode: c?.code ?? '',
+      enabledAt: r.enabled_at ?? '',
+    };
+  });
+}
+
+/** Establece los cohorts para los que el examen definitivo está habilitado (reemplaza la lista) */
+export async function setExamAvailability(examId: string, cohortIds: string[]) {
+  const { error: delErr } = await supabaseAdmin
+    .from('exam_availability')
+    .delete()
+    .eq('exam_id', examId);
+  if (delErr) throw new Error(delErr.message);
+  const unique = [...new Set(cohortIds)].filter(Boolean);
+  if (unique.length === 0) return;
+  const { error: insErr } = await supabaseAdmin
+    .from('exam_availability')
+    .insert(unique.map((cohort_id) => ({ exam_id: examId, cohort_id })));
+  if (insErr) throw new Error(insErr.message);
+}
+
+/** Exámenes para los que el cohort está habilitado (solo definitivos; training no usa esta tabla) */
+export async function getEnabledDefinitiveExamIdsForCohort(cohortId: string): Promise<Set<string>> {
+  const { data, error } = await supabaseAdmin
+    .from('exam_availability')
+    .select('exam_id')
+    .eq('cohort_id', cohortId);
+  if (error || !data?.length) return new Set();
+  return new Set(data.map((r) => r.exam_id));
 }
 
 export async function deleteQuestion(questionId: string) {
@@ -225,7 +337,20 @@ export async function getExamForStudent(examId: string) {
   };
 }
 
-/** Cuenta cuántos intentos finalizados tiene el usuario en este examen */
+/** Cuenta intentos finalizados por tipo (práctica o definitivo) */
+export async function countFinishedAttemptsByType(examId: string, userId: string, isDefinitive: boolean): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from('exam_attempts')
+    .select('id', { count: 'exact', head: true })
+    .eq('exam_id', examId)
+    .eq('user_id', userId)
+    .eq('is_definitive', isDefinitive)
+    .not('finished_at', 'is', null);
+  if (error) return 0;
+  return count ?? 0;
+}
+
+/** Cuenta cuántos intentos finalizados tiene el usuario en este examen (todos) */
 export async function countFinishedAttempts(examId: string, userId: string): Promise<number> {
   const { count, error } = await supabaseAdmin
     .from('exam_attempts')
@@ -257,10 +382,10 @@ export async function getExistingAttempt(examId: string, userId: string): Promis
   return getUnfinishedAttempt(examId, userId);
 }
 
-export async function createAttempt(examId: string, userId: string) {
+export async function createAttempt(examId: string, userId: string, isDefinitive: boolean = false) {
   const { data, error } = await supabaseAdmin
     .from('exam_attempts')
-    .insert({ exam_id: examId, user_id: userId })
+    .insert({ exam_id: examId, user_id: userId, is_definitive: isDefinitive })
     .select()
     .single();
   if (error) throw new Error(error.message);
@@ -429,6 +554,7 @@ export async function getAttemptResult(attemptId: string, userId: string) {
   };
 }
 
+/** Lista exámenes del curso (mismo banco para práctica y definitivo). No filtra por cohort. */
 export async function listExamsForCourse(courseId: string) {
   const { data: bySubject } = await supabaseAdmin
     .from('exams')
@@ -450,8 +576,7 @@ export async function listExamsForCourse(courseId: string) {
     .select('id, title, subject_id, course_id, question_count, passing_score, duration_minutes, max_attempts')
     .eq('course_id', courseId);
 
-  const all = [...(examsByCourse || []), ...examsBySubject];
-  return all;
+  return [...(examsByCourse || []), ...examsBySubject];
 }
 
 /** Resultados del examen: un registro por usuario con su mejor intento (mayor calificación) */

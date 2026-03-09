@@ -97,38 +97,70 @@ router.get('/exams', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const exams = await examService.listExamsForCourse(req.user.courseId);
     const examIds = exams.map((e) => e.id);
+    if (examIds.length === 0) {
+      res.json([]);
+      return;
+    }
+    const cohortId = req.user.cohortId ?? null;
+    const enabledDefinitiveIds = cohortId ? await examService.getEnabledDefinitiveExamIdsForCohort(cohortId) : new Set<string>();
+
     const { data: attempts } = await supabaseAdmin
       .from('exam_attempts')
-      .select('exam_id, id, score, finished_at')
+      .select('exam_id, id, score, finished_at, is_definitive')
       .eq('user_id', req.user.id)
       .in('exam_id', examIds);
 
-    const byExam = new Map<string, { bestAttemptId: string; bestScore: number; finishedCount: number }>();
+    const byExam = new Map<string, { bestAttemptId: string; bestScore: number; practiceFinished: number; definitiveFinished: number }>();
+    for (const e of examIds) {
+      byExam.set(e, { bestAttemptId: '', bestScore: 0, practiceFinished: 0, definitiveFinished: 0 });
+    }
     for (const a of attempts || []) {
-      const cur = byExam.get(a.exam_id) || { bestAttemptId: a.id, bestScore: a.score ?? 0, finishedCount: 0 };
-      if (a.finished_at) cur.finishedCount++;
-      if ((a.score ?? 0) > cur.bestScore) {
+      const cur = byExam.get(a.exam_id)!;
+      const isDef = (a as { is_definitive?: boolean }).is_definitive === true;
+      if (a.finished_at) {
+        if (isDef) cur.definitiveFinished++;
+        else cur.practiceFinished++;
+      }
+      const score = a.score ?? 0;
+      if (score > cur.bestScore) {
         cur.bestAttemptId = a.id;
-        cur.bestScore = a.score ?? 0;
+        cur.bestScore = score;
       }
       byExam.set(a.exam_id, cur);
     }
 
     const maxAttemptsByExam = new Map(exams.map((e) => [e.id, (e as { max_attempts?: number }).max_attempts ?? 1]));
+    const extraCounts = await Promise.all(
+      exams.map(async (e) => {
+        const n = await examService.getExtraAttemptsCount(e.id, req.user!.id);
+        return { examId: e.id, extra: n };
+      })
+    );
+    const extraByExam = new Map(extraCounts.map((x) => [x.examId, x.extra]));
+
     res.json(
       exams.map((e) => {
-        const summary = byExam.get(e.id);
-        const maxAttempts = maxAttemptsByExam.get(e.id) ?? 1;
-        const finishedCount = summary?.finishedCount ?? 0;
-        const canRetry = finishedCount < maxAttempts;
+        const summary = byExam.get(e.id)!;
+        const practiceMax = maxAttemptsByExam.get(e.id) ?? 1;
+        const definitiveMax = 1;
+        const extra = extraByExam.get(e.id) ?? 0;
+        const enabledForDefinitive = enabledDefinitiveIds.has(e.id);
+        const canPractice = summary.practiceFinished < practiceMax;
+        const canTakeDefinitive = enabledForDefinitive && summary.definitiveFinished < definitiveMax + extra;
+        const canRetry = canPractice || canTakeDefinitive;
         return {
           ...e,
-          attemptId: summary?.bestAttemptId,
-          attempted: (summary?.finishedCount ?? 0) > 0,
-          completed: (summary?.finishedCount ?? 0) > 0,
-          bestScore: summary?.bestScore,
-          attemptsUsed: finishedCount,
-          maxAttempts,
+          attemptId: summary.bestAttemptId,
+          attempted: summary.practiceFinished > 0 || summary.definitiveFinished > 0,
+          completed: summary.definitiveFinished > 0,
+          bestScore: summary.bestScore,
+          practiceAttemptsUsed: summary.practiceFinished,
+          practiceMaxAttempts: practiceMax,
+          definitiveAttemptsUsed: summary.definitiveFinished,
+          definitiveMaxAttempts: definitiveMax + extra,
+          enabledForDefinitive,
+          canPractice,
+          canTakeDefinitive,
           canRetry,
         };
       })
@@ -140,7 +172,7 @@ router.get('/exams', async (req: AuthenticatedRequest, res: Response) => {
 
 router.post(
   '/exams/:id/start',
-  [param('id').isUUID()],
+  [param('id').isUUID(), body('definitive').optional().isBoolean()],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -152,28 +184,53 @@ router.post(
       return;
     }
     const examId = req.params.id;
+    const definitive = req.body.definitive === true;
     const exams = await examService.listExamsForCourse(req.user.courseId);
     const exam = exams.find((e) => e.id === examId);
     if (!exam) {
       res.status(403).json({ error: 'Exam not available for your course' });
       return;
     }
-    const maxAttempts = (exam as { max_attempts?: number }).max_attempts ?? 1;
+    const practiceMaxAttempts = (exam as { max_attempts?: number }).max_attempts ?? 1;
+    const extraAttempts = await examService.getExtraAttemptsCount(examId, req.user.id);
+
     try {
       const unfinished = await examService.getUnfinishedAttempt(examId, req.user.id);
       if (unfinished) {
         const examData = await examService.getExamForStudent(examId);
-        res.status(200).json({ attemptId: unfinished.id, ...examData });
+        res.status(200).json({ attemptId: unfinished.id, ...examData, isDefinitive: definitive });
         return;
       }
-      const finishedCount = await examService.countFinishedAttempts(examId, req.user.id);
-      if (finishedCount >= maxAttempts) {
-        res.status(400).json({ error: 'no_more_attempts', message: 'Ya usaste todos los intentos permitidos para este examen.' });
-        return;
+
+      if (definitive) {
+        const cohortId = req.user.cohortId;
+        if (!cohortId) {
+          res.status(400).json({ error: 'No cohort assigned' });
+          return;
+        }
+        const enabledIds = await examService.getEnabledDefinitiveExamIdsForCohort(cohortId);
+        if (!enabledIds.has(examId)) {
+          res.status(403).json({ error: 'Examen definitivo no habilitado para tu curso en este momento.' });
+          return;
+        }
+        const definitiveCount = await examService.countFinishedAttemptsByType(examId, req.user.id, true);
+        if (definitiveCount >= 1 + extraAttempts) {
+          res.status(400).json({ error: 'no_more_attempts', message: 'Ya usaste todos los intentos del examen definitivo.' });
+          return;
+        }
+        const attempt = await examService.createAttempt(examId, req.user.id, true);
+        const examData = await examService.getExamForStudent(examId);
+        res.status(201).json({ attemptId: attempt.id, ...examData, isDefinitive: true });
+      } else {
+        const practiceCount = await examService.countFinishedAttemptsByType(examId, req.user.id, false);
+        if (practiceCount >= practiceMaxAttempts) {
+          res.status(400).json({ error: 'no_more_attempts', message: 'Ya usaste todos los intentos de práctica. Habilitarán el examen definitivo cuando corresponda.' });
+          return;
+        }
+        const attempt = await examService.createAttempt(examId, req.user.id, false);
+        const examData = await examService.getExamForStudent(examId);
+        res.status(201).json({ attemptId: attempt.id, ...examData, isDefinitive: false });
       }
-      const attempt = await examService.createAttempt(examId, req.user.id);
-      const examData = await examService.getExamForStudent(examId);
-      res.status(201).json({ attemptId: attempt.id, ...examData });
     } catch (e) {
       res.status(500).json({ error: (e as Error).message });
     }

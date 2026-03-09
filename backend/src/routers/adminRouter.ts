@@ -12,6 +12,7 @@ import * as notificationService from '../services/notificationService';
 import * as paymentService from '../services/paymentService';
 import * as attendanceService from '../services/attendanceService';
 import * as downloadsService from '../services/downloadsService';
+import * as cashService from '../services/cashService';
 import { uploadFile } from '../services/uploadService';
 import { AuthenticatedRequest } from '../types';
 import archiver from 'archiver';
@@ -36,6 +37,7 @@ router.post(
     body('startTime').optional(optionalFalsy).matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/),
     body('scheduleType').optional(optionalFalsy).isIn(['weekdays', 'weekends']),
     body('practiceWeeks').optional(optionalFalsy).toInt().isInt({ min: 1, max: 3 }),
+    body('practiceHoursPerDay').optional(optionalFalsy).toInt().isInt({ min: 1, max: 4 }),
     body('citizenship').optional(optionalFalsy).trim().isString().isLength({ max: 100 }),
     body('bloodType').optional(optionalFalsy).trim().isString().isLength({ max: 10 }),
     body('birthDate').optional(optionalFalsy).trim().isString().isLength({ max: 20 }),
@@ -55,9 +57,10 @@ router.post(
       return;
     }
 
-    const { email, password, fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, initialPaymentAmount } = req.body;
+    const { email, password, fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, practiceHoursPerDay: practiceHoursPerDayRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, initialPaymentAmount } = req.body;
     const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
     const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : null;
+    const practiceHoursPerDay = practiceHoursPerDayRaw != null ? Math.min(4, Math.max(1, Number(practiceHoursPerDayRaw))) : 1;
 
     const result = await createUser({
       email,
@@ -74,6 +77,7 @@ router.post(
       startTime: role === 'student' ? (startTime != null && String(startTime).trim() ? String(startTime).trim().slice(0, 5) : null) : null,
       scheduleType: role === 'student' ? (scheduleType === 'weekdays' || scheduleType === 'weekends' ? scheduleType : null) : null,
       practiceWeeks: role === 'student' ? practiceWeeks : null,
+      practiceHoursPerDay: role === 'student' ? practiceHoursPerDay : undefined,
       citizenship: citizenship?.trim() || null,
       bloodType: bloodType?.trim() || null,
       birthDate: role === 'student' ? (birthDate?.trim() || null) : null,
@@ -156,6 +160,7 @@ router.patch(
     body('startTime').optional(optionalFalsy).matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/),
     body('scheduleType').optional().isIn(['weekdays', 'weekends']),
     body('practiceWeeks').optional().toInt().isInt({ min: 1, max: 3 }),
+    body('practiceHoursPerDay').optional().toInt().isInt({ min: 1, max: 4 }),
     body('citizenship').optional().trim().isString().isLength({ max: 100 }),
     body('bloodType').optional().trim().isString().isLength({ max: 10 }),
     body('birthDate').optional().trim().isString().isLength({ max: 20 }),
@@ -174,9 +179,10 @@ router.patch(
       res.status(400).json({ errors: errors.array() });
       return;
     }
-    const { fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, password } = req.body;
+    const { fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, practiceHoursPerDay: practiceHoursPerDayRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, password } = req.body;
     const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
     const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : undefined;
+    const practiceHoursPerDay = practiceHoursPerDayRaw != null ? Math.min(4, Math.max(1, Number(practiceHoursPerDayRaw))) : undefined;
     if (role === 'student' && !cohortId) {
       res.status(400).json({ error: 'Para estudiante selecciona un curso (Curso Tipo A/B Nro X)' });
       return;
@@ -194,6 +200,7 @@ router.patch(
       startTime: startTime ?? undefined,
       scheduleType: scheduleType ?? undefined,
       practiceWeeks: practiceWeeks !== undefined ? practiceWeeks : undefined,
+      practiceHoursPerDay: practiceHoursPerDay !== undefined ? practiceHoursPerDay : undefined,
       citizenship: citizenship !== undefined ? (citizenship?.trim() || null) : undefined,
       bloodType: bloodType !== undefined ? (bloodType?.trim() || null) : undefined,
       birthDate: birthDate !== undefined ? (birthDate?.trim() || null) : undefined,
@@ -738,7 +745,7 @@ router.get('/exams', async (req: AuthenticatedRequest, res: Response) => {
     const { supabaseAdmin } = await import('../config/supabase');
     const { data, error } = await supabaseAdmin
       .from('exams')
-      .select('id, title, subject_id, course_id, question_count, passing_score, duration_minutes, max_attempts, created_at')
+      .select('id, title, subject_id, course_id, question_count, passing_score, duration_minutes, max_attempts, exam_kind, created_at')
       .order('created_at', { ascending: false });
     if (error) throw new Error(error.message);
     let exams = data || [];
@@ -762,6 +769,103 @@ router.get('/exams', async (req: AuthenticatedRequest, res: Response) => {
     res.status(500).json({ error: (e as Error).message });
   }
 });
+
+router.get('/exams/:id', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return;
+  }
+  try {
+    const exam = await examService.getExam(req.params.id);
+    res.json(exam);
+  } catch (e) {
+    res.status(404).json({ error: (e as Error).message });
+  }
+});
+
+router.patch(
+  '/exams/:id',
+  [
+    param('id').isUUID(),
+    body('title').optional().trim().notEmpty(),
+    body('description').optional(),
+    body('questionCount').optional().isInt({ min: 1 }),
+    body('passingScore').optional().isFloat({ min: 0, max: 100 }),
+    body('durationMinutes').optional(),
+    body('maxAttempts').optional().isInt({ min: 1 }),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    try {
+      const exam = await examService.updateExam(req.params.id, {
+        title: req.body.title,
+        description: req.body.description,
+        questionCount: req.body.questionCount,
+        passingScore: req.body.passingScore,
+        durationMinutes: req.body.durationMinutes,
+        maxAttempts: req.body.maxAttempts,
+      });
+      res.json(exam);
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.get('/exams/:id/availability', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return;
+  }
+  try {
+    const list = await examService.listExamAvailability(req.params.id);
+    res.json(list);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.post(
+  '/exams/:id/availability',
+  [param('id').isUUID(), body('cohortIds').isArray(), body('cohortIds.*').isUUID()],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    try {
+      await examService.setExamAvailability(req.params.id, req.body.cohortIds || []);
+      res.json({ message: 'Availability updated' });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  '/exams/:id/grant-attempt',
+  [param('id').isUUID(), body('userId').isUUID()],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    try {
+      await examService.grantExtraAttempt(req.params.id, req.body.userId, req.user?.id ?? null);
+      res.status(201).json({ message: 'Extra attempt granted' });
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message });
+    }
+  }
+);
 
 router.delete('/exams/:id', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
   const errors = validationResult(req);
@@ -1091,15 +1195,23 @@ router.get('/instructors/:id/availability', [param('id').isUUID()], async (req: 
 });
 
 // --- Slots disponibles (por curso + instructor): horarios no ocupados. currentScheduleId = opcional para reasignar (incluye ese slot como disponible)
+// Si se envían scheduleType y hoursPerDay, devuelve { slots: { start_time, end_time }[] } con bloques realmente disponibles.
 router.get('/available-slots', async (req: AuthenticatedRequest, res: Response) => {
   const cohortId = req.query.cohortId as string | undefined;
   const instructorId = req.query.instructorId as string | undefined;
   const currentScheduleId = req.query.currentScheduleId as string | undefined;
+  const scheduleType = req.query.scheduleType as 'weekdays' | 'weekends' | undefined;
+  const hoursPerDay = req.query.hoursPerDay != null ? Math.min(4, Math.max(1, Number(req.query.hoursPerDay))) : undefined;
   if (!cohortId || !instructorId) {
     res.status(400).json({ error: 'cohortId e instructorId son requeridos' });
     return;
   }
   try {
+    if (scheduleType === 'weekdays' || scheduleType === 'weekends') {
+      const duration = hoursPerDay ?? 1;
+      const slots = await scheduleService.getAvailableStartTimes(cohortId, instructorId, scheduleType, duration, currentScheduleId || null);
+      return res.json({ slots });
+    }
     const slots = await scheduleService.getAvailableSlots(cohortId, instructorId, currentScheduleId || null);
     res.json({ slots });
   } catch (e) {
@@ -1127,9 +1239,22 @@ router.get('/instructor-schedule', async (req: AuthenticatedRequest, res: Respon
 // --- Course schedules (listado y detalle; la creación es al inscribir usuario) ---
 router.get('/course-schedules', async (req: AuthenticatedRequest, res: Response) => {
   const cohortId = req.query.cohortId as string | undefined;
+  const instructorId = req.query.instructorId as string | undefined;
   try {
-    const list = await scheduleService.listCourseSchedules(cohortId);
+    const list = await scheduleService.listCourseSchedules(cohortId, instructorId);
     res.json(list);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+/** Bloques de horario con cupos para la pestaña Horarios por curso (inscripción). */
+router.get('/schedule-blocks', async (req: AuthenticatedRequest, res: Response) => {
+  const cohortId = req.query.cohortId as string | undefined;
+  const instructorId = req.query.instructorId as string | undefined;
+  try {
+    const blocks = await scheduleService.listScheduleBlocksForEnrollment(cohortId, instructorId);
+    res.json(blocks);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
@@ -1161,6 +1286,388 @@ router.get('/course-schedules/:id/students', [param('id').isUUID()], async (req:
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }
+});
+
+// --- Caja ---
+router.get('/cash/summary', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const summary = await cashService.getTodaySummary();
+    res.json(summary);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/cash/dashboard', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const dashboard = await cashService.getFinancialDashboard();
+    res.json(dashboard);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/cash/open-session', async (req: AuthenticatedRequest, res: Response) => {
+  const date = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+  try {
+    const session = await cashService.getOpenSessionForDate(date);
+    res.json(session);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.post(
+  '/cash/open',
+  [
+    body('date').matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('date must be YYYY-MM-DD'),
+    body('openingAmount').isFloat({ min: 0 }).withMessage('openingAmount must be >= 0'),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    if (!req.user?.id) {
+      res.status(401).json({ error: 'No autenticado' });
+      return;
+    }
+    try {
+      const session = await cashService.openSession({
+        date: req.body.date,
+        openingAmount: Number(req.body.openingAmount),
+        openedBy: req.user.id,
+      });
+      res.status(201).json(session);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  '/cash/close',
+  [body('sessionId').isUUID()],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    if (!req.user?.id) {
+      res.status(401).json({ error: 'No autenticado' });
+      return;
+    }
+    try {
+      const session = await cashService.closeSession({
+        sessionId: req.body.sessionId,
+        closedBy: req.user.id,
+      });
+      res.json(session);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.get('/cash/sessions', async (req: AuthenticatedRequest, res: Response) => {
+  const fromDate = req.query.fromDate as string | undefined;
+  const toDate = req.query.toDate as string | undefined;
+  const status = req.query.status as 'open' | 'closed' | undefined;
+  const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
+  const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
+  try {
+    const result = await cashService.listSessions({ fromDate, toDate, status, limit, offset });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/cash/sessions/:id/close-preview', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return;
+  }
+  try {
+    const data = await cashService.getSessionForClose(req.params.id);
+    if (!data) {
+      res.status(404).json({ error: 'Sesión no encontrada o ya cerrada' });
+      return;
+    }
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/cash/transactions', async (req: AuthenticatedRequest, res: Response) => {
+  const fromDate = req.query.fromDate as string | undefined;
+  const toDate = req.query.toDate as string | undefined;
+  const type = req.query.type as 'income' | 'expense' | undefined;
+  const sessionId = req.query.sessionId as string | undefined;
+  const search = req.query.search as string | undefined;
+  const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
+  const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
+  try {
+    const result = await cashService.listTransactions({
+      fromDate,
+      toDate,
+      type,
+      sessionId,
+      search,
+      limit,
+      offset,
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/cash/sessions/:id/transactions', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    res.status(400).json({ errors: errors.array() });
+    return;
+  }
+  try {
+    const transactions = await cashService.listTransactionsBySession(req.params.id);
+    res.json(transactions);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.post(
+  '/cash/income',
+  [
+    body('sessionId').isUUID(),
+    body('concept').trim().notEmpty(),
+    body('incomeType').isIn(cashService.INCOME_TYPES),
+    body('amount').isFloat({ min: 0.01 }),
+    body('paymentMethod').isIn(['efectivo', 'transferencia', 'tarjeta']),
+    body('notes').optional().trim().isString(),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    try {
+      const tx = await cashService.addIncome({
+        sessionId: req.body.sessionId,
+        concept: req.body.concept,
+        incomeType: req.body.incomeType,
+        amount: Number(req.body.amount),
+        paymentMethod: req.body.paymentMethod,
+        notes: req.body.notes,
+        createdBy: req.user?.id ?? null,
+      });
+      res.status(201).json(tx);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  '/cash/expense',
+  [
+    body('sessionId').isUUID(),
+    body('concept').trim().notEmpty(),
+    body('category').isIn(cashService.EXPENSE_CATEGORIES),
+    body('amount').isFloat({ min: 0.01 }),
+    body('paymentMethod').isIn(['efectivo', 'transferencia', 'tarjeta']),
+    body('notes').optional().trim().isString(),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    try {
+      const tx = await cashService.addExpense({
+        sessionId: req.body.sessionId,
+        concept: req.body.concept,
+        category: req.body.category,
+        amount: Number(req.body.amount),
+        paymentMethod: req.body.paymentMethod,
+        notes: req.body.notes,
+        createdBy: req.user?.id ?? null,
+      });
+      res.status(201).json(tx);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.delete(
+  '/cash/transactions/:id',
+  [param('id').isUUID()],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    const sessionId = req.query.sessionId as string;
+    if (!sessionId) {
+      res.status(400).json({ error: 'sessionId es requerido (query)' });
+      return;
+    }
+    try {
+      await cashService.deleteTransaction(req.params.id, sessionId);
+      res.json({ message: 'Movimiento eliminado' });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.patch(
+  '/cash/transactions/:id',
+  [
+    param('id').isUUID(),
+    body('concept').optional().trim().isString(),
+    body('category').optional().isIn(cashService.EXPENSE_CATEGORIES),
+    body('income_type').optional().isIn(cashService.INCOME_TYPES),
+    body('amount').optional().isFloat({ min: 0.01 }),
+    body('payment_method').optional().isIn(['efectivo', 'transferencia', 'tarjeta']),
+    body('notes').optional().trim().isString(),
+    body('adminCode').optional().trim().isString(),
+    body('reason').optional().trim().isString(),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ error: 'No autorizado' });
+      return;
+    }
+    try {
+      const payload: Parameters<typeof cashService.updateTransaction>[1] = {};
+      if (req.body.concept !== undefined) payload.concept = req.body.concept;
+      if (req.body.category !== undefined) payload.category = req.body.category;
+      if (req.body.income_type !== undefined) payload.income_type = req.body.income_type;
+      if (req.body.amount !== undefined) payload.amount = Number(req.body.amount);
+      if (req.body.payment_method !== undefined) payload.payment_method = req.body.payment_method;
+      if (req.body.notes !== undefined) payload.notes = req.body.notes;
+      const options =
+        req.body.adminCode != null || req.body.reason != null
+          ? { adminCode: req.body.adminCode as string | undefined, reason: req.body.reason as string | undefined }
+          : undefined;
+      const updated = await cashService.updateTransaction(req.params.id, payload, userId, options);
+      res.json(updated);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  '/cash/transactions/:id/anulate',
+  [
+    param('id').isUUID(),
+    body('adminCode').optional().trim().isString(),
+    body('reason').optional().trim().isString(),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    const userId = req.user?.id;
+    if (!userId) {
+      res.status(401).json({ error: 'No autorizado' });
+      return;
+    }
+    try {
+      const options =
+        req.body.adminCode != null || req.body.reason != null
+          ? { adminCode: req.body.adminCode as string | undefined, reason: req.body.reason as string | undefined }
+          : undefined;
+      const updated = await cashService.anulateTransaction(req.params.id, userId, options);
+      res.json(updated);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.get('/cash/report', async (req: AuthenticatedRequest, res: Response) => {
+  const from = req.query.from as string;
+  const to = req.query.to as string;
+  if (!from || !to) {
+    res.status(400).json({ error: 'Parámetros from y to (YYYY-MM-DD) son requeridos' });
+    return;
+  }
+  try {
+    const report = await cashService.getReportByPeriod(from, to);
+    res.json(report);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/cash/report/export', async (req: AuthenticatedRequest, res: Response) => {
+  const from = req.query.from as string;
+  const to = req.query.to as string;
+  const format = ((req.query.format as string) || 'xlsx').toLowerCase();
+  const reportType = (req.query.reportType as string) || 'Personalizado';
+  if (!from || !to) {
+    res.status(400).json({ error: 'Parámetros from y to (YYYY-MM-DD) son requeridos' });
+    return;
+  }
+  try {
+    const data = await cashService.getReportDataForExport(from, to);
+    if (data.transactions.length === 0) {
+      res.status(400).json({ error: 'No hay datos para exportar en el rango seleccionado' });
+      return;
+    }
+    const generatedAt = new Date().toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' });
+    const generatedBy = (req as AuthenticatedRequest).user?.fullName ?? (req as AuthenticatedRequest).user?.email ?? 'Sistema';
+
+    if (format === 'pdf') {
+      const buffer = await cashService.buildCashReportPdf(data, reportType, generatedAt, generatedBy);
+      res.setHeader('Content-Type', 'application/pdf');
+      const pdfFilename = from === to ? `reporte_caja_${from}.pdf` : `reporte_caja_${from}_a_${to}.pdf`;
+      res.setHeader('Content-Disposition', `attachment; filename="${pdfFilename}"`);
+      res.send(buffer);
+      return;
+    }
+
+    if (format === 'xlsx') {
+      const buffer = await cashService.buildCashReportExcelFull(data, reportType, generatedAt, generatedBy);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      const filename = from === to ? `reporte_caja_${from}.xlsx` : `reporte_caja_${from}_a_${to}.xlsx`;
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(buffer);
+      return;
+    }
+
+    res.status(400).json({ error: 'Formato no soportado. Use format=xlsx o format=pdf' });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.get('/cash/constants', async (_req: AuthenticatedRequest, res: Response) => {
+  res.json({
+    incomeTypes: cashService.INCOME_TYPES,
+    expenseCategories: cashService.EXPENSE_CATEGORIES,
+    paymentMethods: ['efectivo', 'transferencia', 'tarjeta'] as const,
+  });
 });
 
 // --- Descargas: reporte curso (ZIP con 2 CSVs + 1 Excel formato CURSO INTENSIVO con 3 hojas) ---

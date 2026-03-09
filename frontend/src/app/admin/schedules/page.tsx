@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAuthHeaders, triggerSessionExpired } from '@/lib/api';
 
@@ -27,14 +28,20 @@ interface CourseSchedule {
   cohorts?: { id: string; name: string; code: string; course_id: string; courses?: { name: string } } | null;
 }
 
-/** Bloque agrupado: mismo curso, instructor y hora (ej. Lunes a Viernes 08:00). */
-interface ScheduleBlock {
+interface ScheduleBlockForEnrollment {
   key: string;
-  courseLabel: string;
+  courseName: string;
+  cohortId: string;
+  cohortName: string;
+  timeLabel: string;
+  instructorId: string;
   instructorName: string;
-  timeLabel: string;   // "Lunes a Viernes 08:00" o "Sábado y Domingo 10:00"
-  slots: CourseSchedule[];
-  firstSlot: CourseSchedule;
+  startTime: string;
+  scheduleType: 'weekdays' | 'weekends' | 'single';
+  totalSlots: number;
+  enrolledCount: number;
+  firstSlotId: string;
+  dayOfWeek: number;
 }
 
 interface Cohort {
@@ -72,6 +79,11 @@ export default function AdminSchedulesPage() {
   const [changeScheduleSubmitting, setChangeScheduleSubmitting] = useState(false);
   const [changeScheduleError, setChangeScheduleError] = useState('');
   const [tab, setTab] = useState<'by-course' | 'by-instructor'>('by-course');
+  const [scheduleBlocks, setScheduleBlocks] = useState<ScheduleBlockForEnrollment[]>([]);
+  const [blocksLoading, setBlocksLoading] = useState(false);
+  const [filterDay, setFilterDay] = useState<string>('');
+  const [filterTime, setFilterTime] = useState<string>('');
+  const [filterStatus, setFilterStatus] = useState<string>('');
   const [availabilityInstructorId, setAvailabilityInstructorId] = useState('');
   const [availability, setAvailability] = useState<{ occupied: { date: string; start_time: string; student_names: string[]; status: 'occupied_week1' | 'occupied_ending' }[]; free: { date: string; start_time: string }[] } | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
@@ -98,9 +110,29 @@ export default function AdminSchedulesPage() {
       .finally(() => setLoading(false));
   };
 
+  const loadBlocks = () => {
+    if (!token) return;
+    setBlocksLoading(true);
+    const params = new URLSearchParams();
+    if (filterCohortId) params.set('cohortId', filterCohortId);
+    if (filterInstructorId) params.set('instructorId', filterInstructorId);
+    fetch(`${API_URL}/api/admin/schedule-blocks?${params.toString()}`, { headers: getAuthHeaders(token) })
+      .then((r) => r.json().then((data) => ({ ok: r.ok, status: r.status, data })))
+      .then(({ ok, status, data }) => {
+        if (ok && Array.isArray(data)) {
+          setScheduleBlocks(data);
+        } else {
+          setScheduleBlocks([]);
+          if (status === 401) triggerSessionExpired();
+        }
+      })
+      .catch(() => setScheduleBlocks([]))
+      .finally(() => setBlocksLoading(false));
+  };
+
   useEffect(() => {
-    load();
-  }, [token, filterCohortId]);
+    if (tab === 'by-course') loadBlocks();
+  }, [token, tab, filterCohortId, filterInstructorId]);
 
   useEffect(() => {
     if (!token) return;
@@ -113,9 +145,24 @@ export default function AdminSchedulesPage() {
     });
   }, [token]);
 
-  const filteredSchedules = filterInstructorId
-    ? schedules.filter((s) => s.instructor_id === filterInstructorId)
-    : schedules;
+  /** Filtra bloques por día, hora y estado (client-side). */
+  const filteredBlocks = scheduleBlocks.filter((b) => {
+    if (filterDay && b.dayOfWeek !== Number(filterDay)) return false;
+    if (filterTime && b.startTime !== filterTime) return false;
+    const available = b.totalSlots - b.enrolledCount;
+    if (filterStatus === 'disponible' && available < 2) return false;
+    if (filterStatus === 'ultimos' && available !== 1) return false;
+    if (filterStatus === 'lleno' && available !== 0) return false;
+    return true;
+  });
+
+  /** Agrupa bloques por nombre de curso para cards/acordeón. */
+  const blocksByCourse = filteredBlocks.reduce((acc, b) => {
+    const name = b.courseName;
+    if (!acc[name]) acc[name] = [];
+    acc[name].push(b);
+    return acc;
+  }, {} as Record<string, ScheduleBlockForEnrollment[]>);
 
   /** Lunes y domingo de la semana mostrada en fecha local YYYY-MM-DD (weekOffset: 0 = actual) */
   const getWeekStartEnd = (offset: number) => {
@@ -256,6 +303,7 @@ export default function AdminSchedulesPage() {
       setChangeScheduleStudent(null);
       setStudentsModal(null);
       load();
+      loadBlocks();
     } catch (err) {
       setChangeScheduleError(err instanceof Error ? err.message : 'Error al cambiar horario');
     } finally {
@@ -278,32 +326,11 @@ export default function AdminSchedulesPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error al eliminar');
       load();
+      loadBlocks();
       if (studentsModal?.id === schedule.id) { setStudentsModal(null); setStudentsModalTimeLabel(null); }
     } catch (err) {
       setApiError(err instanceof Error ? err.message : 'Error al eliminar');
     }
-  };
-
-  const handleDeleteBlock = async (block: ScheduleBlock) => {
-    if (!confirm(`¿Eliminar bloque completo: ${block.courseLabel} · ${block.timeLabel}? Los alumnos asignados quedarán sin horario.`)) return;
-    if (!token) return;
-    setApiError('');
-    for (const s of block.slots) {
-      try {
-        const res = await fetch(`${API_URL}/api/admin/course-schedules/${s.id}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders(token),
-        });
-        if (res.status === 401) { triggerSessionExpired(); return; }
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Error al eliminar');
-        if (studentsModal && block.slots.some((x) => x.id === studentsModal.id)) { setStudentsModal(null); setStudentsModalTimeLabel(null); }
-      } catch (err) {
-        setApiError(err instanceof Error ? err.message : 'Error al eliminar');
-        return;
-      }
-    }
-    load();
   };
 
   const getCohortLabel = (s: CourseSchedule) => {
@@ -313,43 +340,6 @@ export default function AdminSchedulesPage() {
   };
 
   const formatTime = (s: CourseSchedule) => (typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : s.start_time);
-
-  /** Agrupa horarios por curso + instructor + hora; devuelve bloques para una fila cada uno. */
-  const getScheduleBlocks = (list: CourseSchedule[]): ScheduleBlock[] => {
-    const timeNorm = (t: string) => (typeof t === 'string' ? t.trim().slice(0, 5) : String(t));
-    const byKey = new Map<string, CourseSchedule[]>();
-    for (const s of list) {
-      const key = `${s.cohort_id}|${s.instructor_id}|${timeNorm(s.start_time)}`;
-      if (!byKey.has(key)) byKey.set(key, []);
-      byKey.get(key)!.push(s);
-    }
-    const blocks: ScheduleBlock[] = [];
-    for (const [, slots] of byKey) {
-      const sorted = [...slots].sort((a, b) => a.day_of_week - b.day_of_week);
-      const first = sorted[0];
-      const days = sorted.map((s) => s.day_of_week);
-      const timeStr = formatTime(first);
-      let timeLabel: string;
-      if (days.length === 5 && days.every((d, i) => d === [1, 2, 3, 4, 5][i])) {
-        timeLabel = `Lunes a Viernes ${timeStr}`;
-      } else if (days.length === 2 && days.includes(6) && days.includes(7)) {
-        timeLabel = `Sábado y Domingo ${timeStr}`;
-      } else {
-        const dayLabels = days.map((d) => DAYS.find((x) => x.value === d)?.short || String(d)).join(', ');
-        timeLabel = `${dayLabels} ${timeStr}`;
-      }
-      blocks.push({
-        key: first.cohort_id + first.instructor_id + timeStr,
-        courseLabel: getCohortLabel(first),
-        instructorName: first.instructors?.full_name || '—',
-        timeLabel,
-        slots: sorted,
-        firstSlot: first,
-      });
-    }
-    blocks.sort((a, b) => a.courseLabel.localeCompare(b.courseLabel) || a.instructorName.localeCompare(b.instructorName) || a.timeLabel.localeCompare(b.timeLabel));
-    return blocks;
-  };
 
   return (
     <div className="space-y-8">
@@ -540,127 +530,190 @@ export default function AdminSchedulesPage() {
 
       {/* Tab: Horarios por curso */}
       {tab === 'by-course' && (
-        <>
-      {/* Filtros */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500">Filtros</h3>
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="w-full sm:min-w-[200px] sm:w-auto">
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">Curso</label>
-            <select
-              value={filterCohortId}
-              onChange={(e) => setFilterCohortId(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 focus:ring-offset-0"
-            >
-              <option value="">Todos los cursos</option>
-              {cohorts.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.courses?.name || 'Curso'} Nro {c.name}
-                </option>
-              ))}
-            </select>
+        <div className="space-y-6">
+          {/* Filtros */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500">Filtros</h3>
+            <div className="flex flex-wrap items-end gap-4">
+              <div className="w-full sm:min-w-[180px] sm:w-auto">
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Curso</label>
+                <select
+                  value={filterCohortId}
+                  onChange={(e) => setFilterCohortId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                >
+                  <option value="">Todos los cursos</option>
+                  {cohorts.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.courses?.name || 'Curso'} Nro {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-full sm:min-w-[180px] sm:w-auto">
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Instructor</label>
+                <select
+                  value={filterInstructorId}
+                  onChange={(e) => setFilterInstructorId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                >
+                  <option value="">Todos los instructores</option>
+                  {instructors.map((i) => (
+                    <option key={i.id} value={i.id}>{i.full_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-full sm:min-w-[140px] sm:w-auto">
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Día</label>
+                <select
+                  value={filterDay}
+                  onChange={(e) => setFilterDay(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                >
+                  <option value="">Todos</option>
+                  {DAYS.filter((d) => d.value <= 7).map((d) => (
+                    <option key={d.value} value={String(d.value)}>{d.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-full sm:min-w-[120px] sm:w-auto">
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Hora</label>
+                <select
+                  value={filterTime}
+                  onChange={(e) => setFilterTime(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                >
+                  <option value="">Todas</option>
+                  {['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'].map((h) => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="w-full sm:min-w-[160px] sm:w-auto">
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Estado</label>
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                >
+                  <option value="">Todos</option>
+                  <option value="disponible">Disponible</option>
+                  <option value="ultimos">Últimos cupos</option>
+                  <option value="lleno">Lleno</option>
+                </select>
+              </div>
+              {(filterCohortId || filterInstructorId || filterDay || filterTime || filterStatus) && (
+                <button
+                  type="button"
+                  onClick={() => { setFilterCohortId(''); setFilterInstructorId(''); setFilterDay(''); setFilterTime(''); setFilterStatus(''); }}
+                  className="min-h-[44px] rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  Limpiar filtros
+                </button>
+              )}
+            </div>
           </div>
-          <div className="w-full sm:min-w-[200px] sm:w-auto">
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">Instructor</label>
-            <select
-              value={filterInstructorId}
-              onChange={(e) => setFilterInstructorId(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 focus:ring-offset-0"
-            >
-              <option value="">Todos los instructores</option>
-              {instructors.map((i) => (
-                <option key={i.id} value={i.id}>{i.full_name}</option>
+
+          {/* Contenido: cards por curso */}
+          {blocksLoading ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 rounded-2xl border border-slate-200 bg-white">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
+              <p className="text-sm text-slate-500">Cargando horarios...</p>
+            </div>
+          ) : Object.keys(blocksByCourse).length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-16 rounded-2xl border border-slate-200 bg-white text-center">
+              <div className="rounded-full bg-slate-100 p-4">
+                <svg className="h-8 w-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <p className="font-medium text-slate-700">No hay horarios para mostrar</p>
+              <p className="text-sm text-slate-500">
+                {(filterCohortId || filterInstructorId || filterDay || filterTime || filterStatus)
+                  ? 'Prueba quitando filtros.'
+                  : 'Los horarios se crean al inscribir alumnos en Usuarios.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {Object.entries(blocksByCourse).map(([courseName, blocks]) => (
+                <div key={courseName} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                  <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-4">
+                    <h3 className="text-lg font-semibold text-slate-900">{courseName}</h3>
+                    <p className="text-sm text-slate-500 mt-0.5">{blocks.length} horario(s) disponible(s)</p>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {blocks.map((block) => {
+                      const available = block.totalSlots - block.enrolledCount;
+                      const status: 'disponible' | 'ultimos' | 'lleno' = available === 0 ? 'lleno' : available <= 1 ? 'ultimos' : 'disponible';
+                      const statusConfig = {
+                        disponible: { label: 'Disponible', className: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+                        ultimos: { label: 'Últimos cupos', className: 'bg-amber-100 text-amber-800 border-amber-200' },
+                        lleno: { label: 'Lleno', className: 'bg-red-100 text-red-800 border-red-200' },
+                      }[status];
+                      const enrollUrl = `/admin/users?cohortId=${encodeURIComponent(block.cohortId)}&instructorId=${encodeURIComponent(block.instructorId)}&scheduleType=${encodeURIComponent(block.scheduleType)}&startTime=${encodeURIComponent(block.startTime)}`;
+                      const openVerAlumnos = () => {
+                        const synthetic: CourseSchedule = {
+                          id: block.firstSlotId,
+                          cohort_id: block.cohortId,
+                          instructor_id: block.instructorId,
+                          day_of_week: block.dayOfWeek,
+                          start_time: block.startTime,
+                          created_at: '',
+                          instructors: { id: block.instructorId, full_name: block.instructorName, email: null },
+                          cohorts: { id: block.cohortId, name: block.cohortName, code: block.cohortName, course_id: '', courses: { name: block.courseName } },
+                        };
+                        setStudentsModal(synthetic);
+                        setStudentsModalTimeLabel(block.timeLabel);
+                      };
+                      return (
+                        <div key={block.key} className="flex flex-wrap items-center gap-4 px-5 py-4 hover:bg-slate-50/50 transition-colors">
+                          <div className="flex-1 min-w-[200px]">
+                            <p className="font-medium text-slate-900">{block.timeLabel}</p>
+                            <p className="text-sm text-slate-500">Instructor: {block.instructorName}</p>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-sm font-medium text-slate-700">
+                              Cupos: <span className="text-slate-900">{block.enrolledCount}/{block.totalSlots}</span>
+                              <span className="text-slate-500 font-normal ml-1">({available} disponibles)</span>
+                            </span>
+                            <span className={`inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-medium ${statusConfig.className}`}>
+                              {statusConfig.label}
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {status === 'lleno' ? (
+                              <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-200 px-4 py-2 text-sm font-medium text-slate-500 cursor-not-allowed">
+                                <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
+                                Sin cupos
+                              </span>
+                            ) : (
+                              <Link
+                                href={enrollUrl}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-teal-700"
+                              >
+                                <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
+                                Inscribir alumno
+                              </Link>
+                            )}
+                            <button
+                              type="button"
+                              onClick={openVerAlumnos}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+                            >
+                              <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                              Ver alumnos
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               ))}
-            </select>
-          </div>
-          {(filterCohortId || filterInstructorId) && (
-            <button
-              type="button"
-              onClick={() => { setFilterCohortId(''); setFilterInstructorId(''); }}
-              className="w-full sm:w-auto min-h-[44px] sm:min-h-0 rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50"
-            >
-              Limpiar filtros
-            </button>
+            </div>
           )}
         </div>
-      </div>
-
-      {/* Tabla */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-16">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
-            <p className="text-sm text-slate-500">Cargando horarios...</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px]">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50/80">
-                  <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Curso</th>
-                  <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Instructor</th>
-                  <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Horario</th>
-                  <th className="px-5 py-3.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {getScheduleBlocks(filteredSchedules).map((block) => (
-                  <tr key={block.key} className="transition-colors hover:bg-slate-50/80">
-                    <td className="px-5 py-3.5">
-                      <span className="font-medium text-slate-900">{block.courseLabel}</span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-sm font-medium text-slate-700">
-                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-teal-500" />
-                        {block.instructorName}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <span className="inline-flex rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700">
-                        {block.timeLabel}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => { setStudentsModal(block.firstSlot); setStudentsModalTimeLabel(block.timeLabel); }}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-teal-200 bg-white px-3 py-1.5 text-sm font-medium text-teal-700 transition-colors hover:bg-teal-50"
-                        >
-                          <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                          Ver alumnos
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteBlock(block)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-red-50 hover:border-red-200 hover:text-red-700"
-                        >
-                          <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                          Eliminar
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {filteredSchedules.length === 0 && !loading && (
-              <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-                <div className="rounded-full bg-slate-100 p-4">
-                  <svg className="h-8 w-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <p className="font-medium text-slate-700">No hay horarios para mostrar</p>
-                <p className="text-sm text-slate-500">
-                  {filterCohortId || filterInstructorId ? 'Prueba quitando filtros.' : 'Los horarios se crean al inscribir alumnos en Usuarios.'}
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-        </>
       )}
 
       {/* Modal alumno */}

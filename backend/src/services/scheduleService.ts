@@ -2,6 +2,15 @@ import { supabaseAdmin } from '../config/supabase';
 
 const HOURS_6_TO_23 = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'];
 
+/** Dado "HH:00", devuelve la hora N posiciones después. Ej: addHours("16:00", 2) => "18:00". */
+function addHoursToHHmm(hhmm: string, add: number): string {
+  const i = HOURS_6_TO_23.indexOf(typeof hhmm === 'string' ? hhmm.slice(0, 5) : hhmm);
+  if (i < 0) return hhmm;
+  const j = i + add;
+  if (j >= HOURS_6_TO_23.length) return '';
+  return HOURS_6_TO_23[j];
+}
+
 const WEEKDAYS = [1, 2, 3, 4, 5]; // Lunes a Viernes
 const WEEKEND_DAYS = [6, 7]; // Sábado, Domingo
 
@@ -60,6 +69,70 @@ export async function getAvailableSlots(
     }
   }
   return slots;
+}
+
+/** Bloques de inicio disponibles (inicio–fin) según tipo de día y duración. Excluye el bloque actual si se reasigna (excludeScheduleId). */
+export async function getAvailableStartTimes(
+  cohortId: string,
+  instructorId: string,
+  scheduleType: 'weekdays' | 'weekends',
+  hoursPerDay: number,
+  excludeScheduleId?: string | null
+): Promise<{ start_time: string; end_time: string }[]> {
+  const duration = Math.min(4, Math.max(1, hoursPerDay));
+  const { data: rows, error } = await supabaseAdmin
+    .from('course_schedules')
+    .select('id, day_of_week, start_time, schedule_group_id')
+    .eq('cohort_id', cohortId)
+    .eq('instructor_id', instructorId);
+
+  if (error) throw new Error(error.message);
+
+  const takenSet = new Set<string>();
+  const timeNorm = (t: unknown) => (typeof t === 'string' ? t.slice(0, 5) : String(t));
+
+  const excludeKeys = new Set<string>();
+  if (excludeScheduleId && rows?.length) {
+    const current = rows.find((r) => (r as { id: string }).id === excludeScheduleId) as { id: string; day_of_week: number; start_time: string; schedule_group_id: string | null } | undefined;
+    if (current) {
+      const gid = current.schedule_group_id;
+      if (gid) {
+        const inGroup = rows.filter((r) => (r as { schedule_group_id?: string | null }).schedule_group_id === gid);
+        for (const r of inGroup) {
+          const t = timeNorm((r as { start_time: string }).start_time);
+          excludeKeys.add(`${(r as { day_of_week: number }).day_of_week}-${t}`);
+        }
+      } else {
+        excludeKeys.add(`${current.day_of_week}-${timeNorm(current.start_time)}`);
+      }
+    }
+  }
+
+  for (const r of rows || []) {
+    const key = `${(r as { day_of_week: number }).day_of_week}-${timeNorm((r as { start_time: string }).start_time)}`;
+    if (!excludeKeys.has(key)) takenSet.add(key);
+  }
+
+  const days = scheduleType === 'weekdays' ? WEEKDAYS : WEEKEND_DAYS;
+  const result: { start_time: string; end_time: string }[] = [];
+
+  for (const startTime of HOURS_6_TO_23) {
+    const endTime = addHoursToHHmm(startTime, duration);
+    if (!endTime) continue;
+    let allFree = true;
+    for (const day of days) {
+      for (let h = 0; h < duration; h++) {
+        const t = addHoursToHHmm(startTime, h);
+        if (takenSet.has(`${day}-${t}`)) {
+          allFree = false;
+          break;
+        }
+      }
+      if (!allFree) break;
+    }
+    if (allFree) result.push({ start_time: startTime, end_time: endTime });
+  }
+  return result;
 }
 
 /** Slots libres y ocupados con nombres de estudiantes para un cohorte + instructor (para mostrar disponibilidad con quién está cada horario). */
@@ -138,7 +211,7 @@ export async function listCourseSchedules(cohortId?: string, instructorId?: stri
   let query = supabaseAdmin
     .from('course_schedules')
     .select(
-      'id, cohort_id, instructor_id, day_of_week, start_time, created_at, instructors(id, full_name, email), cohorts(id, name, code, course_id, courses(name))'
+      'id, cohort_id, instructor_id, day_of_week, start_time, created_at, schedule_group_id, instructors(id, full_name, email), cohorts(id, name, code, course_id, courses(name))'
     )
     .order('cohort_id')
     .order('day_of_week')
@@ -170,6 +243,87 @@ export async function listCourseSchedules(cohortId?: string, instructorId?: stri
       cohorts: singleCohort,
     };
   }) as unknown as CourseScheduleRow[];
+}
+
+/** Bloque de horario para vista de inscripción: mismo curso (cohort) + instructor + hora. */
+export interface ScheduleBlockForEnrollment {
+  key: string;
+  courseName: string;
+  cohortId: string;
+  cohortName: string;
+  timeLabel: string;
+  instructorId: string;
+  instructorName: string;
+  startTime: string;
+  scheduleType: 'weekdays' | 'weekends' | 'single';
+  totalSlots: number;
+  enrolledCount: number;
+  firstSlotId: string;
+  dayOfWeek: number;
+}
+
+/** Lista bloques de horario con cupos (total y ocupados) para la pestaña Horarios por curso. */
+export async function listScheduleBlocksForEnrollment(
+  cohortId?: string,
+  instructorId?: string
+): Promise<ScheduleBlockForEnrollment[]> {
+  const rows = await listCourseSchedules(cohortId, instructorId);
+  const timeNorm = (t: unknown) => (typeof t === 'string' ? t.trim().slice(0, 5) : String(t));
+  const byKey = new Map<string, CourseScheduleRow[]>();
+  for (const s of rows) {
+    const key = `${s.cohort_id}|${s.instructor_id}|${timeNorm(s.start_time)}`;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key)!.push(s);
+  }
+  const blocks: ScheduleBlockForEnrollment[] = [];
+  for (const [, slots] of byKey) {
+    const sorted = [...slots].sort((a, b) => a.day_of_week - b.day_of_week);
+    const first = sorted[0];
+    const slotIds = sorted.map((x) => x.id);
+    const courseName = (first.cohorts as { courses?: { name?: string } } | null)?.courses?.name ?? 'Curso';
+    const cohortName = (first.cohorts as { name?: string; code?: string } | null)?.name ?? (first.cohorts as { code?: string } | null)?.code ?? '';
+    const instructorName = (first.instructors as { full_name?: string } | null)?.full_name ?? '—';
+    const startTime = timeNorm(first.start_time);
+    const days = sorted.map((s) => s.day_of_week);
+    let timeLabel: string;
+    let scheduleType: 'weekdays' | 'weekends' | 'single' = 'single';
+    if (days.length === 5 && days.every((d, i) => d === [1, 2, 3, 4, 5][i])) {
+      timeLabel = `Lunes a Viernes ${startTime}`;
+      scheduleType = 'weekdays';
+    } else if (days.length === 2 && days.includes(6) && days.includes(7)) {
+      timeLabel = `Sábado y Domingo ${startTime}`;
+      scheduleType = 'weekends';
+    } else {
+      const dayLabels = days.map((d) => ['', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][d] ?? String(d)).join(', ');
+      timeLabel = `${dayLabels} ${startTime}`;
+    }
+    let enrolledCount = 0;
+    if (slotIds.length > 0) {
+      const { count, error } = await supabaseAdmin
+        .from('user_profiles')
+        .select('id', { count: 'exact', head: true })
+        .in('schedule_id', slotIds)
+        .eq('role', 'student');
+      if (!error) enrolledCount = count ?? 0;
+    }
+    blocks.push({
+      key: first.cohort_id + first.instructor_id + startTime,
+      courseName,
+      cohortId: first.cohort_id,
+      cohortName,
+      timeLabel,
+      instructorId: first.instructor_id,
+      instructorName,
+      startTime,
+      scheduleType,
+      totalSlots: sorted.length,
+      enrolledCount,
+      firstSlotId: first.id,
+      dayOfWeek: first.day_of_week,
+    });
+  }
+  blocks.sort((a, b) => a.courseName.localeCompare(b.courseName) || a.instructorName.localeCompare(b.instructorName) || a.timeLabel.localeCompare(b.timeLabel));
+  return blocks;
 }
 
 /** Obtiene o crea un slot (cohort + instructor + día + hora). Si ya existe, devuelve ese id. */
@@ -441,14 +595,20 @@ export async function getScheduleWithStudents(scheduleId: string) {
 
 // --- Horarios semanales (grupos): Lunes a Viernes o Fines de semana ---
 
-/** Obtiene o crea un grupo semanal y sus slots. Devuelve el primer slot para asignar a schedule_id. */
+/** Obtiene o crea un grupo semanal y sus slots. Si hoursPerDay > 1, crea un bloque de N horas consecutivas por día. Devuelve el primer slot (día 1, hora inicio) para asignar a schedule_id. */
 export async function getOrCreateScheduleGroup(params: {
   cohortId: string;
   instructorId: string;
   type: 'weekdays' | 'weekends';
   startTime: string; // "06:00" ... "23:00"
+  hoursPerDay?: number; // 1-4, por defecto 1
 }): Promise<{ groupId: string; firstSlotId: string; label: string }> {
   const startTime = typeof params.startTime === 'string' ? params.startTime.slice(0, 5) : params.startTime;
+  const duration = Math.min(4, Math.max(1, params.hoursPerDay ?? 1));
+  const days = params.type === 'weekdays' ? WEEKDAYS : WEEKEND_DAYS;
+  const firstDay = days[0];
+
+  let resolvedGroupId: string;
   const { data: existingGroup } = await supabaseAdmin
     .from('schedule_groups')
     .select('id')
@@ -459,50 +619,61 @@ export async function getOrCreateScheduleGroup(params: {
     .maybeSingle();
 
   if (existingGroup) {
-    const days = params.type === 'weekdays' ? WEEKDAYS : WEEKEND_DAYS;
-    const firstDay = days[0];
+    resolvedGroupId = existingGroup.id;
     const { data: firstSlot } = await supabaseAdmin
       .from('course_schedules')
       .select('id')
-      .eq('schedule_group_id', existingGroup.id)
+      .eq('schedule_group_id', resolvedGroupId)
       .eq('day_of_week', firstDay)
       .eq('start_time', startTime)
-      .order('day_of_week')
       .limit(1)
       .maybeSingle();
     if (firstSlot) {
       const label = params.type === 'weekdays' ? `Lunes a Viernes ${startTime}` : `Sábado y Domingo ${startTime}`;
-      return { groupId: existingGroup.id, firstSlotId: (firstSlot as { id: string }).id, label };
+      return { groupId: resolvedGroupId, firstSlotId: (firstSlot as { id: string }).id, label };
     }
+  } else {
+    const { data: newGroup, error: groupErr } = await supabaseAdmin
+      .from('schedule_groups')
+      .insert({
+        cohort_id: params.cohortId,
+        instructor_id: params.instructorId,
+        type: params.type,
+        start_time: startTime,
+      })
+      .select('id')
+      .single();
+    if (groupErr) throw new Error(groupErr.message);
+    resolvedGroupId = (newGroup as { id: string }).id;
   }
 
-  const { data: newGroup, error: groupErr } = await supabaseAdmin
-    .from('schedule_groups')
-    .insert({
-      cohort_id: params.cohortId,
-      instructor_id: params.instructorId,
-      type: params.type,
-      start_time: startTime,
-    })
-    .select('id')
-    .single();
-  if (groupErr) throw new Error(groupErr.message);
-  const groupId = (newGroup as { id: string }).id;
-
-  const days = params.type === 'weekdays' ? WEEKDAYS : WEEKEND_DAYS;
   let firstSlotId = '';
   for (const dayOfWeek of days) {
+    for (let h = 0; h < duration; h++) {
+      const slotStart = addHoursToHHmm(startTime, h);
+      if (!slotStart) continue;
+      const slot = await getOrCreateCourseSchedule({
+        cohortId: params.cohortId,
+        instructorId: params.instructorId,
+        dayOfWeek,
+        startTime: slotStart,
+      });
+      if (!firstSlotId && dayOfWeek === firstDay && slotStart === startTime) firstSlotId = slot.id;
+      await supabaseAdmin.from('course_schedules').update({ schedule_group_id: resolvedGroupId }).eq('id', slot.id);
+    }
+  }
+  if (!firstSlotId) {
     const slot = await getOrCreateCourseSchedule({
       cohortId: params.cohortId,
       instructorId: params.instructorId,
-      dayOfWeek,
+      dayOfWeek: firstDay,
       startTime,
     });
-    if (!firstSlotId) firstSlotId = slot.id;
-    await supabaseAdmin.from('course_schedules').update({ schedule_group_id: groupId }).eq('id', slot.id);
+    firstSlotId = slot.id;
+    await supabaseAdmin.from('course_schedules').update({ schedule_group_id: resolvedGroupId }).eq('id', slot.id);
   }
   const label = params.type === 'weekdays' ? `Lunes a Viernes ${startTime}` : `Sábado y Domingo ${startTime}`;
-  return { groupId, firstSlotId, label };
+  return { groupId: resolvedGroupId, firstSlotId, label };
 }
 
 /** Lista grupos de horario por cohorte (para selector en admin). */

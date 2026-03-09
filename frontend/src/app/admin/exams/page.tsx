@@ -16,6 +16,7 @@ interface Exam {
   passing_score: number;
   duration_minutes?: number | null;
   max_attempts?: number;
+  exam_kind?: 'training' | 'definitive';
 }
 
 interface Course {
@@ -50,6 +51,14 @@ export default function AdminExamsPage() {
   });
   const [message, setMessage] = useState('');
   const [apiError, setApiError] = useState('');
+  const [editModal, setEditModal] = useState<Exam | null>(null);
+  const [editForm, setEditForm] = useState({ title: '', description: '', questionCount: 10, passingScore: 70, durationMinutes: '' as number | '', maxAttempts: 1 });
+  const [editSaving, setEditSaving] = useState(false);
+  const [availabilityModal, setAvailabilityModal] = useState<Exam | null>(null);
+  const [availabilityCohorts, setAvailabilityCohorts] = useState<{ id: string; name: string; code: string; course_id: string }[]>([]);
+  const [availabilitySelected, setAvailabilitySelected] = useState<Set<string>>(new Set());
+  const [availabilitySaving, setAvailabilitySaving] = useState(false);
+  const [availabilityLoaded, setAvailabilityLoaded] = useState(false);
 
   const load = () => {
     if (!token) return;
@@ -101,6 +110,8 @@ export default function AdminExamsPage() {
           courseId,
           questionCount: form.questionCount,
           passingScore: form.passingScore,
+          durationMinutes: form.durationMinutes === '' ? undefined : form.durationMinutes,
+          maxAttempts: form.maxAttempts,
         }),
       });
       const data = await res.json();
@@ -133,6 +144,112 @@ export default function AdminExamsPage() {
     }
     const c = courses.find((x) => x.id === exam.course_id);
     return c ? c.name : 'Curso';
+  };
+
+  const getExamCourseId = (exam: Exam): string | null => {
+    if (exam.course_id) return exam.course_id;
+    if (exam.subject_id) {
+      const s = subjects.find((x) => x.id === exam.subject_id);
+      return s?.course_id ?? null;
+    }
+    return null;
+  };
+
+  const openEditModal = async (exam: Exam) => {
+    setEditModal(exam);
+    try {
+      const res = await fetch(`${API_URL}/api/admin/exams/${exam.id}`, { headers: getAuthHeaders(token!) });
+      if (!res.ok) throw new Error('');
+      const data = await res.json();
+      setEditForm({
+        title: data.title ?? '',
+        description: data.description ?? '',
+        questionCount: data.question_count ?? 10,
+        passingScore: data.passing_score ?? 70,
+        durationMinutes: data.duration_minutes != null ? data.duration_minutes : '',
+        maxAttempts: data.max_attempts ?? 1,
+      });
+    } catch {
+      setMessage('Error al cargar el examen');
+    }
+  };
+
+  const saveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editModal || !token) return;
+    setEditSaving(true);
+    setMessage('');
+    try {
+      const res = await fetch(`${API_URL}/api/admin/exams/${editModal.id}`, {
+        method: 'PATCH',
+        headers: { ...getAuthHeaders(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: editForm.title,
+          description: editForm.description || null,
+          questionCount: editForm.questionCount,
+          passingScore: editForm.passingScore,
+          durationMinutes: editForm.durationMinutes === '' ? null : editForm.durationMinutes,
+          maxAttempts: editForm.maxAttempts,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 401) { triggerSessionExpired(); return; }
+      if (!res.ok) throw new Error(data.error || 'Error');
+      setMessage('Configuración actualizada');
+      setEditModal(null);
+      load();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const openAvailabilityModal = async (exam: Exam) => {
+    setAvailabilityModal(exam);
+    setAvailabilityLoaded(false);
+    setAvailabilitySelected(new Set());
+    const courseId = getExamCourseId(exam);
+    if (!courseId || !token) {
+      setAvailabilityCohorts([]);
+      setAvailabilityLoaded(true);
+      return;
+    }
+    try {
+      const [cohortsRes, availRes] = await Promise.all([
+        fetch(`${API_URL}/api/admin/cohorts?courseId=${courseId}`, { headers: getAuthHeaders(token) }),
+        fetch(`${API_URL}/api/admin/exams/${exam.id}/availability`, { headers: getAuthHeaders(token) }),
+      ]);
+      const cohortsData = await cohortsRes.json();
+      const availData = await availRes.json();
+      setAvailabilityCohorts(Array.isArray(cohortsData) ? cohortsData : []);
+      const enabled = new Set((Array.isArray(availData) ? availData : []).map((a: { cohortId: string }) => a.cohortId));
+      setAvailabilitySelected(enabled);
+    } catch {
+      setAvailabilityCohorts([]);
+    } finally {
+      setAvailabilityLoaded(true);
+    }
+  };
+
+  const saveAvailability = async () => {
+    if (!availabilityModal || !token) return;
+    setAvailabilitySaving(true);
+    try {
+      const res = await fetch(`${API_URL}/api/admin/exams/${availabilityModal.id}/availability`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cohortIds: [...availabilitySelected] }),
+      });
+      if (res.status === 401) { triggerSessionExpired(); return; }
+      if (!res.ok) throw new Error('');
+      setMessage('Habilitación actualizada');
+      setAvailabilityModal(null);
+    } catch {
+      setMessage('Error al guardar');
+    } finally {
+      setAvailabilitySaving(false);
+    }
   };
 
   return (
@@ -314,7 +431,7 @@ export default function AdminExamsPage() {
                 <th className="px-6 py-3 text-left text-sm font-semibold">Alcance</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Preguntas</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Duración</th>
-                <th className="px-6 py-3 text-left text-sm font-semibold">Intentos</th>
+                <th className="px-6 py-3 text-left text-sm font-semibold">Intentos práctica</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Mínimo</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Acciones</th>
               </tr>
@@ -335,16 +452,25 @@ export default function AdminExamsPage() {
                     </span>
                   </td>
                   <td className="px-6 py-4">
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-2">
                       <Link
                         href={`/admin/exams/${ex.id}/questions`}
                         className="inline-flex items-center gap-1.5 text-red-600 hover:text-red-700 font-medium text-sm"
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                        </svg>
-                        {ex.subject_id ? 'Gestionar banco de preguntas' : 'Agregar preguntas'}
+                        Preguntas
                       </Link>
+                      <Link
+                        href={`/admin/exams/${ex.id}/results`}
+                        className="inline-flex items-center gap-1.5 text-neutral-700 hover:text-neutral-900 font-medium text-sm"
+                      >
+                        Resultados
+                      </Link>
+                      <button type="button" onClick={() => openEditModal(ex)} className="text-neutral-600 hover:text-neutral-900 font-medium text-sm">
+                        Editar
+                      </button>
+                      <button type="button" onClick={() => openAvailabilityModal(ex)} className="text-amber-600 hover:text-amber-700 font-medium text-sm" title="Habilitar examen definitivo para números de curso">
+                        Habilitar definitivo
+                      </button>
                       <button onClick={() => deleteExam(ex.id)} className="text-red-600 hover:underline text-sm">
                         Eliminar
                       </button>
@@ -357,6 +483,85 @@ export default function AdminExamsPage() {
           </div>
         )}
       </div>
+
+      {editModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !editSaving && setEditModal(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-neutral-100 font-semibold text-neutral-900">Editar configuración del examen</div>
+            <form onSubmit={saveEdit} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Título</label>
+                <input type="text" required value={editForm.title} onChange={(e) => setEditForm({ ...editForm, title: e.target.value })} className="w-full px-4 py-2 rounded-lg border border-neutral-300" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Descripción (opcional)</label>
+                <textarea value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} rows={2} className="w-full px-4 py-2 rounded-lg border border-neutral-300" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Preguntas</label>
+                  <input type="number" min={1} value={editForm.questionCount} onChange={(e) => setEditForm({ ...editForm, questionCount: parseInt(e.target.value) || 1 })} className="w-full px-4 py-2 rounded-lg border border-neutral-300" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Nota mínima (%)</label>
+                  <input type="number" min={0} max={100} value={editForm.passingScore} onChange={(e) => setEditForm({ ...editForm, passingScore: parseInt(e.target.value) || 70 })} className="w-full px-4 py-2 rounded-lg border border-neutral-300" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Duración (min)</label>
+                  <input type="number" min={1} placeholder="Sin límite" value={editForm.durationMinutes === '' ? '' : editForm.durationMinutes} onChange={(e) => setEditForm({ ...editForm, durationMinutes: e.target.value === '' ? '' : parseInt(e.target.value) || 1 })} className="w-full px-4 py-2 rounded-lg border border-neutral-300" />
+                </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Intentos máx.</label>
+                <input type="number" min={1} value={editForm.maxAttempts} onChange={(e) => setEditForm({ ...editForm, maxAttempts: parseInt(e.target.value) || 1 })} className="w-full px-4 py-2 rounded-lg border border-neutral-300" />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-2">
+                <button type="submit" disabled={editSaving} className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50">{editSaving ? 'Guardando...' : 'Guardar'}</button>
+                <button type="button" onClick={() => setEditModal(null)} disabled={editSaving} className="px-4 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-50">Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {availabilityModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => !availabilitySaving && setAvailabilityModal(null)}>
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-neutral-100 font-semibold text-neutral-900">Habilitar examen definitivo por curso</div>
+            <p className="px-6 py-2 text-sm text-neutral-600">Selecciona los números de curso que pueden rendir este examen.</p>
+            <div className="p-6 overflow-auto flex-1">
+              {!availabilityLoaded ? (
+                <p className="text-neutral-500 text-center py-4">Cargando...</p>
+              ) : availabilityCohorts.length === 0 ? (
+                <p className="text-neutral-500 text-center py-4">No hay números de curso para este examen. Crea cursos en Cursos y materias.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {availabilityCohorts.map((c) => (
+                    <li key={c.id} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={availabilitySelected.has(c.id)}
+                        onChange={(e) => {
+                          const next = new Set(availabilitySelected);
+                          if (e.target.checked) next.add(c.id); else next.delete(c.id);
+                          setAvailabilitySelected(next);
+                        }}
+                        className="rounded border-neutral-300"
+                      />
+                      <span className="font-medium">{c.name}</span>
+                      <span className="text-neutral-500 text-sm">({c.code})</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t border-neutral-100 flex gap-2 justify-end">
+              <button type="button" onClick={saveAvailability} disabled={availabilitySaving || !availabilityLoaded} className="px-4 py-2 rounded-lg bg-amber-600 text-white font-medium hover:bg-amber-700 disabled:opacity-50">{availabilitySaving ? 'Guardando...' : 'Guardar'}</button>
+              <button type="button" onClick={() => setAvailabilityModal(null)} disabled={availabilitySaving} className="px-4 py-2 rounded-lg border border-neutral-300 hover:bg-neutral-50">Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <p className="text-sm text-neutral-500">
         Para ver resultados por estudiante y curso (y las respuestas de cada examen), ve a{' '}
