@@ -153,6 +153,8 @@ export async function createUser(params: {
   endDate?: string | null;
   modality?: string | null;
   initialPaymentAmount?: number | null;
+  discountApplied?: number | null;
+  discountNote?: string | null;
   createdBy?: string | null;
   mustChangePassword?: boolean;
 }): Promise<{ userId: string; error?: string }> {
@@ -243,12 +245,17 @@ export async function createUser(params: {
 
   let totalAmount: number | null = null;
   let amountPaid = 0;
+  let originalPrice: number | null = null;
+  let discountApplied = 0;
   if (params.role === 'student' && courseId) {
     const { data: course, error: courseErr } = await supabaseAdmin.from('courses').select('price').eq('id', courseId).single();
     const price = !courseErr && course?.price != null ? Number(course.price) : 0;
-    totalAmount = price;
+    originalPrice = price;
+    const discount = params.discountApplied != null ? Math.max(0, Number(params.discountApplied)) : 0;
+    discountApplied = Math.min(discount, price);
+    totalAmount = Math.max(0, price - discountApplied);
     const initial = params.initialPaymentAmount != null ? Number(params.initialPaymentAmount) : 0;
-    if (initial > 0 && totalAmount > 0) {
+    if (initial > 0 && totalAmount != null && totalAmount > 0) {
       amountPaid = Math.min(initial, totalAmount);
     }
   }
@@ -284,6 +291,9 @@ export async function createUser(params: {
     amount_paid: amountPaid,
     must_change_password: params.mustChangePassword ?? true,
   };
+  if (params.role === 'student' && originalPrice != null) profileRow.original_price = originalPrice;
+  if (params.role === 'student') profileRow.discount_applied = discountApplied;
+  if (params.role === 'student' && discountApplied > 0 && params.discountNote?.trim()) profileRow.discount_note = params.discountNote.trim();
   if (practiceWeeksVal != null) profileRow.practice_weeks = practiceWeeksVal;
   const hoursPerDayVal = params.role === 'student' && params.practiceHoursPerDay != null
     ? Math.min(4, Math.max(1, params.practiceHoursPerDay))
@@ -312,12 +322,17 @@ export async function createUser(params: {
   }
 
   if (params.role === 'student' && amountPaid > 0) {
-    await supabaseAdmin.from('payments').insert({
+    const paymentNote = discountApplied > 0
+      ? `Pago inicial al inscribir (descuento aplicado: $${discountApplied.toFixed(2)})`
+      : 'Pago inicial al inscribir';
+    const paymentRow: Record<string, unknown> = {
       user_id: authData.user.id,
       amount: amountPaid,
-      note: 'Pago inicial al inscribir',
+      note: paymentNote,
       created_by: params.createdBy ?? null,
-    });
+    };
+    if (discountApplied > 0) paymentRow.discount_applied = discountApplied;
+    await supabaseAdmin.from('payments').insert(paymentRow);
   }
 
   return { userId: authData.user.id };

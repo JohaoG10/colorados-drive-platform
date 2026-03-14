@@ -17,6 +17,19 @@ const DAYS: { value: number; label: string; short: string }[] = [
   { value: 7, label: 'Domingo', short: 'Dom' },
 ];
 
+const DAY_SHORT_BY_JS: string[] = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+const MONTH_SHORT: string[] = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+/** Formatea YYYY-MM-DD a "Lun 3 feb" para las cards del overview. */
+function formatOverviewDate(isoDate: string): string {
+  const d = new Date(isoDate + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return isoDate;
+  const dayShort = DAY_SHORT_BY_JS[d.getDay()];
+  const dayNum = d.getDate();
+  const monthShort = MONTH_SHORT[d.getMonth()];
+  return `${dayShort} ${dayNum} ${monthShort}`;
+}
+
 interface CourseSchedule {
   id: string;
   cohort_id: string;
@@ -42,6 +55,29 @@ interface ScheduleBlockForEnrollment {
   enrolledCount: number;
   firstSlotId: string;
   dayOfWeek: number;
+}
+
+/** Horario agrupado por curso y hora; cupos = instructores con 0 alumnos. */
+interface ScheduleSlotGroupedByTime {
+  cohortId: string;
+  courseName: string;
+  cohortName: string;
+  timeLabel: string;
+  startTime: string;
+  dayOfWeek: number;
+  days: number[];
+  scheduleType: 'weekdays' | 'weekends' | 'single';
+  instructors: { instructorId: string; instructorName: string; enrolledCount: number; firstSlotId: string }[];
+  cuposDisponibles: number;
+}
+
+/** Vista general semanal: una entrada por hora con X/Y cupos; disponibles/ocupados con fechas exactas. */
+interface ScheduleOverviewHour {
+  hour: string;
+  totalInstructors: number;
+  freeCount: number;
+  available: { instructorId: string; instructorName: string; freeDates?: string[] }[];
+  occupied: { instructorId: string; instructorName: string; studentNames: string[]; occupiedDates?: string[] }[];
 }
 
 interface Cohort {
@@ -79,11 +115,11 @@ export default function AdminSchedulesPage() {
   const [changeScheduleSubmitting, setChangeScheduleSubmitting] = useState(false);
   const [changeScheduleError, setChangeScheduleError] = useState('');
   const [tab, setTab] = useState<'by-course' | 'by-instructor'>('by-course');
-  const [scheduleBlocks, setScheduleBlocks] = useState<ScheduleBlockForEnrollment[]>([]);
+  const [scheduleOverview, setScheduleOverview] = useState<ScheduleOverviewHour[]>([]);
   const [blocksLoading, setBlocksLoading] = useState(false);
-  const [filterDay, setFilterDay] = useState<string>('');
-  const [filterTime, setFilterTime] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('');
+  const [weekOffsetByCourse, setWeekOffsetByCourse] = useState(0);
+  const [expandedHour, setExpandedHour] = useState<string | null>(null);
   const [availabilityInstructorId, setAvailabilityInstructorId] = useState('');
   const [availability, setAvailability] = useState<{ occupied: { date: string; start_time: string; student_names: string[]; status: 'occupied_week1' | 'occupied_ending' }[]; free: { date: string; start_time: string }[] } | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
@@ -110,29 +146,43 @@ export default function AdminSchedulesPage() {
       .finally(() => setLoading(false));
   };
 
+  /** Lunes y domingo de la semana (offset 0 = actual) para Horarios por curso. */
+  const getWeekStartEndByCourse = (offset: number) => {
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + mondayOffset + offset * 7);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    const toLocalISO = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return { weekStart: toLocalISO(monday), weekEnd: toLocalISO(sunday) };
+  };
+
   const loadBlocks = () => {
     if (!token) return;
     setBlocksLoading(true);
     const params = new URLSearchParams();
+    const { weekStart, weekEnd } = getWeekStartEndByCourse(weekOffsetByCourse);
+    params.set('weekStart', weekStart);
+    params.set('weekEnd', weekEnd);
     if (filterCohortId) params.set('cohortId', filterCohortId);
     if (filterInstructorId) params.set('instructorId', filterInstructorId);
-    fetch(`${API_URL}/api/admin/schedule-blocks?${params.toString()}`, { headers: getAuthHeaders(token) })
-      .then((r) => r.json().then((data) => ({ ok: r.ok, status: r.status, data })))
+    fetch(`${API_URL}/api/admin/schedule-overview?${params.toString()}`, { headers: getAuthHeaders(token) })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, status: r.status, data: d })))
       .then(({ ok, status, data }) => {
-        if (ok && Array.isArray(data)) {
-          setScheduleBlocks(data);
-        } else {
-          setScheduleBlocks([]);
-          if (status === 401) triggerSessionExpired();
-        }
+        if (status === 401) triggerSessionExpired();
+        if (ok && Array.isArray(data)) setScheduleOverview(data);
+        else setScheduleOverview([]);
       })
-      .catch(() => setScheduleBlocks([]))
+      .catch(() => setScheduleOverview([]))
       .finally(() => setBlocksLoading(false));
   };
 
   useEffect(() => {
     if (tab === 'by-course') loadBlocks();
-  }, [token, tab, filterCohortId, filterInstructorId]);
+  }, [token, tab, filterCohortId, filterInstructorId, weekOffsetByCourse]);
 
   useEffect(() => {
     if (!token) return;
@@ -145,24 +195,15 @@ export default function AdminSchedulesPage() {
     });
   }, [token]);
 
-  /** Filtra bloques por día, hora y estado (client-side). */
-  const filteredBlocks = scheduleBlocks.filter((b) => {
-    if (filterDay && b.dayOfWeek !== Number(filterDay)) return false;
-    if (filterTime && b.startTime !== filterTime) return false;
-    const available = b.totalSlots - b.enrolledCount;
-    if (filterStatus === 'disponible' && available < 2) return false;
-    if (filterStatus === 'ultimos' && available !== 1) return false;
-    if (filterStatus === 'lleno' && available !== 0) return false;
+  /** Filtra horas del overview por estado: disponible (todos libres), ultimos (parcial), lleno (ninguno libre). */
+  const filteredOverview = scheduleOverview.filter((row) => {
+    const total = row.totalInstructors;
+    const free = row.freeCount;
+    if (filterStatus === 'disponible') return total > 0 && free === total;
+    if (filterStatus === 'ultimos') return free > 0 && free < total;
+    if (filterStatus === 'lleno') return total > 0 && free === 0;
     return true;
   });
-
-  /** Agrupa bloques por nombre de curso para cards/acordeón. */
-  const blocksByCourse = filteredBlocks.reduce((acc, b) => {
-    const name = b.courseName;
-    if (!acc[name]) acc[name] = [];
-    acc[name].push(b);
-    return acc;
-  }, {} as Record<string, ScheduleBlockForEnrollment[]>);
 
   /** Lunes y domingo de la semana mostrada en fecha local YYYY-MM-DD (weekOffset: 0 = actual) */
   const getWeekStartEnd = (offset: number) => {
@@ -531,7 +572,51 @@ export default function AdminSchedulesPage() {
       {/* Tab: Horarios por curso */}
       {tab === 'by-course' && (
         <div className="space-y-6">
-          {/* Filtros */}
+          {/* Navegación semanal (mismo estilo que Disponibilidad por instructor) */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">Semana a consultar</h3>
+            <p className="mb-4 text-sm text-slate-600">La disponibilidad y los cupos se calculan para la semana seleccionada.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <nav className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50/80 p-1.5">
+                <button
+                  type="button"
+                  onClick={() => setWeekOffsetByCourse((o) => o - 1)}
+                  className="rounded-lg p-2.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
+                  title="Semana anterior"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                <span className="min-w-[200px] px-4 py-2 text-sm font-semibold text-slate-800 text-center">
+                  {(() => {
+                    const { weekStart, weekEnd } = getWeekStartEndByCourse(weekOffsetByCourse);
+                    const d1 = new Date(weekStart + 'T12:00:00');
+                    const d2 = new Date(weekEnd + 'T12:00:00');
+                    const months = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+                    return `${d1.getDate()} ${months[d1.getMonth()]} – ${d2.getDate()} ${months[d2.getMonth()]} ${d2.getFullYear()}`;
+                  })()}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setWeekOffsetByCourse((o) => o + 1)}
+                  className="rounded-lg p-2.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
+                  title="Semana siguiente"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                </button>
+              </nav>
+              {weekOffsetByCourse !== 0 && (
+                <button
+                  type="button"
+                  onClick={() => setWeekOffsetByCourse(0)}
+                  className="rounded-xl border border-teal-200 bg-teal-50 px-4 py-2.5 text-sm font-medium text-teal-700 hover:bg-teal-100 transition-colors"
+                >
+                  Hoy
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Filtros: curso, instructor, estado */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500">Filtros</h3>
             <div className="flex flex-wrap items-end gap-4">
@@ -563,32 +648,6 @@ export default function AdminSchedulesPage() {
                   ))}
                 </select>
               </div>
-              <div className="w-full sm:min-w-[140px] sm:w-auto">
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">Día</label>
-                <select
-                  value={filterDay}
-                  onChange={(e) => setFilterDay(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
-                >
-                  <option value="">Todos</option>
-                  {DAYS.filter((d) => d.value <= 7).map((d) => (
-                    <option key={d.value} value={String(d.value)}>{d.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="w-full sm:min-w-[120px] sm:w-auto">
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">Hora</label>
-                <select
-                  value={filterTime}
-                  onChange={(e) => setFilterTime(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
-                >
-                  <option value="">Todas</option>
-                  {['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'].map((h) => (
-                    <option key={h} value={h}>{h}</option>
-                  ))}
-                </select>
-              </div>
               <div className="w-full sm:min-w-[160px] sm:w-auto">
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Estado</label>
                 <select
@@ -602,10 +661,10 @@ export default function AdminSchedulesPage() {
                   <option value="lleno">Lleno</option>
                 </select>
               </div>
-              {(filterCohortId || filterInstructorId || filterDay || filterTime || filterStatus) && (
+              {(filterCohortId || filterInstructorId || filterStatus) && (
                 <button
                   type="button"
-                  onClick={() => { setFilterCohortId(''); setFilterInstructorId(''); setFilterDay(''); setFilterTime(''); setFilterStatus(''); }}
+                  onClick={() => { setFilterCohortId(''); setFilterInstructorId(''); setFilterStatus(''); }}
                   className="min-h-[44px] rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
                 >
                   Limpiar filtros
@@ -614,103 +673,112 @@ export default function AdminSchedulesPage() {
             </div>
           </div>
 
-          {/* Contenido: cards por curso */}
+          {/* Resumen: total cupos en las horas mostradas */}
+          {!blocksLoading && scheduleOverview.length > 0 && (
+            <p className="text-sm text-slate-600">
+              Vista general de la semana: <span className="font-semibold text-slate-800">{scheduleOverview.length}</span> horas
+              {filterStatus && ` (filtro: ${filterStatus === 'disponible' ? 'disponible' : filterStatus === 'ultimos' ? 'parcial' : 'lleno'})`}.
+              Total instructores en horario: {scheduleOverview.reduce((s, r) => s + r.totalInstructors, 0) > 0 ? 'según cada hora' : 'ninguno'}.
+            </p>
+          )}
+
+          {/* Grid: todas las horas con X/Y y estado verde / naranja / rojo */}
           {blocksLoading ? (
-            <div className="flex flex-col items-center justify-center gap-3 py-16 rounded-2xl border border-slate-200 bg-white">
-              <div className="h-8 w-8 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
-              <p className="text-sm text-slate-500">Cargando horarios...</p>
-            </div>
-          ) : Object.keys(blocksByCourse).length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 rounded-2xl border border-slate-200 bg-white text-center">
-              <div className="rounded-full bg-slate-100 p-4">
-                <svg className="h-8 w-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <p className="font-medium text-slate-700">No hay horarios para mostrar</p>
-              <p className="text-sm text-slate-500">
-                {(filterCohortId || filterInstructorId || filterDay || filterTime || filterStatus)
-                  ? 'Prueba quitando filtros.'
-                  : 'Los horarios se crean al inscribir alumnos en Usuarios.'}
-              </p>
+            <div className="flex flex-col items-center justify-center gap-3 py-20 rounded-2xl border border-slate-200 bg-white">
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
+              <p className="text-sm text-slate-500">Cargando vista general...</p>
             </div>
           ) : (
-            <div className="space-y-6">
-              {Object.entries(blocksByCourse).map(([courseName, blocks]) => (
-                <div key={courseName} className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-                  <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-4">
-                    <h3 className="text-lg font-semibold text-slate-900">{courseName}</h3>
-                    <p className="text-sm text-slate-500 mt-0.5">{blocks.length} horario(s) disponible(s)</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {filteredOverview.map((row) => {
+                const total = row.totalInstructors;
+                const free = row.freeCount;
+                const status: 'disponible' | 'parcial' | 'lleno' =
+                  total === 0 ? 'lleno' : free === total ? 'disponible' : free > 0 ? 'parcial' : 'lleno';
+                const statusConfig = {
+                  disponible: { label: 'Disponible', bg: 'bg-emerald-100 border-emerald-300', text: 'text-emerald-800', badge: 'bg-emerald-200 text-emerald-900' },
+                  parcial: { label: 'Parcial', bg: 'bg-amber-50 border-amber-300', text: 'text-amber-800', badge: 'bg-amber-200 text-amber-900' },
+                  lleno: { label: 'Sin cupo', bg: 'bg-red-50 border-red-200', text: 'text-red-800', badge: 'bg-red-200 text-red-900' },
+                }[status];
+                const isExpanded = expandedHour === row.hour;
+                const cupoLabel = total === 0 ? '0/0' : `${free}/${total}`;
+                return (
+                  <div
+                    key={row.hour}
+                    className={`rounded-xl border ${statusConfig.bg} overflow-hidden transition-all`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setExpandedHour(isExpanded ? null : row.hour)}
+                      className="w-full p-4 text-left"
+                    >
+                      <p className="text-xl font-bold text-slate-900">{row.hour}</p>
+                      <p className={`mt-1 text-sm font-semibold ${statusConfig.text}`}>
+                        {cupoLabel} {total === 1 ? 'cupo disponible' : 'cupos disponibles'}
+                      </p>
+                      <span className={`mt-2 inline-block rounded-lg px-2 py-0.5 text-xs font-medium ${statusConfig.badge}`}>
+                        {statusConfig.label}
+                      </span>
+                    </button>
+                    {isExpanded && (
+                      <div className="border-t border-slate-200/50 bg-white/80 px-4 py-3 text-sm">
+                        {row.available.length > 0 && (
+                          <>
+                            <p className="font-medium text-slate-700 mt-1">Disponibles (fechas exactas):</p>
+                            <div className="text-slate-600 space-y-1.5 pl-4">
+                              {row.available.map((a) => {
+                                const dates = (a as { freeDates?: string[] }).freeDates ?? [];
+                                const formatted = dates.length > 0
+                                  ? dates.map((d) => formatOverviewDate(d)).join(', ')
+                                  : '—';
+                                return (
+                                  <div key={a.instructorId}>
+                                    <span className="font-medium text-slate-700">{a.instructorName}</span>
+                                    <span className="text-slate-500">: {formatted}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                        {row.occupied.length > 0 && (
+                          <>
+                            <p className="font-medium text-slate-700 mt-2">Ocupados (fechas exactas):</p>
+                            <div className="text-slate-600 space-y-1.5 pl-4">
+                              {row.occupied.map((o) => {
+                                const dates = (o as { occupiedDates?: string[] }).occupiedDates ?? [];
+                                const formatted = dates.length > 0
+                                  ? dates.map((d) => formatOverviewDate(d)).join(', ')
+                                  : '—';
+                                return (
+                                  <div key={o.instructorId}>
+                                    <span className="font-medium text-slate-700">{o.instructorName}</span>
+                                    <span className="text-slate-500">: {formatted}</span>
+                                    {o.studentNames?.length > 0 && (
+                                      <span className="text-slate-500"> → {o.studentNames.join(', ')}</span>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+                        {total === 0 && (
+                          <p className="text-slate-500 mt-1">Ningún instructor con esta hora en el horario.</p>
+                        )}
+                        {row.freeCount > 0 && (
+                          <Link
+                            href={`/admin/users${filterCohortId ? `?cohortId=${encodeURIComponent(filterCohortId)}` : ''}`}
+                            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700"
+                          >
+                            Inscribir alumno
+                          </Link>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div className="divide-y divide-slate-100">
-                    {blocks.map((block) => {
-                      const available = block.totalSlots - block.enrolledCount;
-                      const status: 'disponible' | 'ultimos' | 'lleno' = available === 0 ? 'lleno' : available <= 1 ? 'ultimos' : 'disponible';
-                      const statusConfig = {
-                        disponible: { label: 'Disponible', className: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
-                        ultimos: { label: 'Últimos cupos', className: 'bg-amber-100 text-amber-800 border-amber-200' },
-                        lleno: { label: 'Lleno', className: 'bg-red-100 text-red-800 border-red-200' },
-                      }[status];
-                      const enrollUrl = `/admin/users?cohortId=${encodeURIComponent(block.cohortId)}&instructorId=${encodeURIComponent(block.instructorId)}&scheduleType=${encodeURIComponent(block.scheduleType)}&startTime=${encodeURIComponent(block.startTime)}`;
-                      const openVerAlumnos = () => {
-                        const synthetic: CourseSchedule = {
-                          id: block.firstSlotId,
-                          cohort_id: block.cohortId,
-                          instructor_id: block.instructorId,
-                          day_of_week: block.dayOfWeek,
-                          start_time: block.startTime,
-                          created_at: '',
-                          instructors: { id: block.instructorId, full_name: block.instructorName, email: null },
-                          cohorts: { id: block.cohortId, name: block.cohortName, code: block.cohortName, course_id: '', courses: { name: block.courseName } },
-                        };
-                        setStudentsModal(synthetic);
-                        setStudentsModalTimeLabel(block.timeLabel);
-                      };
-                      return (
-                        <div key={block.key} className="flex flex-wrap items-center gap-4 px-5 py-4 hover:bg-slate-50/50 transition-colors">
-                          <div className="flex-1 min-w-[200px]">
-                            <p className="font-medium text-slate-900">{block.timeLabel}</p>
-                            <p className="text-sm text-slate-500">Instructor: {block.instructorName}</p>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm font-medium text-slate-700">
-                              Cupos: <span className="text-slate-900">{block.enrolledCount}/{block.totalSlots}</span>
-                              <span className="text-slate-500 font-normal ml-1">({available} disponibles)</span>
-                            </span>
-                            <span className={`inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-medium ${statusConfig.className}`}>
-                              {statusConfig.label}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {status === 'lleno' ? (
-                              <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-200 px-4 py-2 text-sm font-medium text-slate-500 cursor-not-allowed">
-                                <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
-                                Sin cupos
-                              </span>
-                            ) : (
-                              <Link
-                                href={enrollUrl}
-                                className="inline-flex items-center gap-1.5 rounded-xl bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-teal-700"
-                              >
-                                <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>
-                                Inscribir alumno
-                              </Link>
-                            )}
-                            <button
-                              type="button"
-                              onClick={openVerAlumnos}
-                              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-                            >
-                              <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                              Ver alumnos
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

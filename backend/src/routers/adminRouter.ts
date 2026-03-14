@@ -49,6 +49,8 @@ router.post(
     body('practiceEndDate').optional(optionalFalsy).trim().isString().isLength({ max: 20 }),
     body('modality').optional(optionalFalsy).trim().isString().isIn(['intensivo', 'regular', 'fin de semana']),
     body('initialPaymentAmount').optional(optionalFalsy).isFloat({ min: 0 }),
+    body('discountApplied').optional(optionalFalsy).isFloat({ min: 0 }),
+    body('discountNote').optional(optionalFalsy).trim().isString().isLength({ max: 500 }),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);
@@ -57,7 +59,7 @@ router.post(
       return;
     }
 
-    const { email, password, fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, practiceHoursPerDay: practiceHoursPerDayRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, initialPaymentAmount } = req.body;
+    const { email, password, fullName, role, cohortId, cedula, gender, scheduleId, instructorId, dayOfWeek, startTime, scheduleType, practiceWeeks: practiceWeeksRaw, practiceHoursPerDay: practiceHoursPerDayRaw, citizenship, bloodType, birthDate, address, phone, startDate, endDate, practiceStartDate, practiceEndDate, modality, initialPaymentAmount, discountApplied, discountNote } = req.body;
     const practiceWeeksNum = practiceWeeksRaw != null ? Number(practiceWeeksRaw) : null;
     const practiceWeeks = practiceWeeksNum === 1 || practiceWeeksNum === 2 || practiceWeeksNum === 3 ? practiceWeeksNum : null;
     const practiceHoursPerDay = practiceHoursPerDayRaw != null ? Math.min(4, Math.max(1, Number(practiceHoursPerDayRaw))) : 1;
@@ -89,6 +91,8 @@ router.post(
       practiceEndDate: role === 'student' ? (practiceEndDate?.trim() || null) : null,
       modality: role === 'student' ? (modality?.trim() || null) : null,
       initialPaymentAmount: role === 'student' ? (initialPaymentAmount != null ? Number(initialPaymentAmount) : null) : null,
+      discountApplied: role === 'student' ? (discountApplied != null ? Number(discountApplied) : null) : null,
+      discountNote: role === 'student' ? (discountNote?.trim() || null) : null,
       createdBy: req.user?.id ?? null,
       mustChangePassword: true,
     });
@@ -1260,6 +1264,38 @@ router.get('/schedule-blocks', async (req: AuthenticatedRequest, res: Response) 
   }
 });
 
+/** Horarios agrupados por curso y hora. Si weekStart y weekEnd (YYYY-MM-DD) se envían, cupos = instructores libres en esa semana. */
+router.get('/schedule-slots-grouped', async (req: AuthenticatedRequest, res: Response) => {
+  const cohortId = req.query.cohortId as string | undefined;
+  const instructorId = req.query.instructorId as string | undefined;
+  const weekStart = req.query.weekStart as string | undefined;
+  const weekEnd = req.query.weekEnd as string | undefined;
+  try {
+    const slots = await scheduleService.listScheduleSlotsGroupedByTime(cohortId, instructorId, weekStart, weekEnd);
+    res.json(slots);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+/** Vista general semanal: todas las horas 06–23 con X/Y cupos, disponibles y ocupados (para Horarios por curso). */
+router.get('/schedule-overview', async (req: AuthenticatedRequest, res: Response) => {
+  const weekStart = req.query.weekStart as string | undefined;
+  const weekEnd = req.query.weekEnd as string | undefined;
+  const cohortId = req.query.cohortId as string | undefined;
+  const instructorId = req.query.instructorId as string | undefined;
+  if (!weekStart || !weekEnd) {
+    res.status(400).json({ error: 'weekStart y weekEnd son requeridos (YYYY-MM-DD)' });
+    return;
+  }
+  try {
+    const overview = await scheduleService.getScheduleOverviewForWeek(weekStart, weekEnd, cohortId, instructorId);
+    res.json(overview);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 router.delete('/course-schedules/:id', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
@@ -1635,7 +1671,7 @@ router.get('/cash/report/export', async (req: AuthenticatedRequest, res: Respons
       res.status(400).json({ error: 'No hay datos para exportar en el rango seleccionado' });
       return;
     }
-    const generatedAt = new Date().toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' });
+    const generatedAt = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', dateStyle: 'short', timeStyle: 'medium' });
     const generatedBy = (req as AuthenticatedRequest).user?.fullName ?? (req as AuthenticatedRequest).user?.email ?? 'Sistema';
 
     if (format === 'pdf') {

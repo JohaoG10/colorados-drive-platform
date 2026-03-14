@@ -126,6 +126,9 @@ export interface CashReportExportData {
   totalIncome: number;
   totalExpense: number;
   balance: number;
+  totalEfectivo?: number;
+  totalTransferencia?: number;
+  totalTarjeta?: number;
   transactionCount: number;
   countIncome: number;
   countExpense: number;
@@ -589,16 +592,20 @@ export async function getReportDataForExport(startDate: string, endDate: string)
   let countExpense = 0;
   const categoryMap = new Map<string, { total: number; count: number }>();
   const methodMap = new Map<string, { total: number; count: number }>();
+  const byPaymentNet = { efectivo: 0, transferencia: 0, tarjeta: 0 };
   for (const t of sorted) {
     const amount = Number(t.amount);
     const cat = categoryLabel(t);
     const method = PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method;
+    const methodKey = t.payment_method === 'efectivo' ? 'efectivo' : t.payment_method === 'transferencia' ? 'transferencia' : 'tarjeta';
     if (t.type === 'income') {
       totalIncome += amount;
       countIncome += 1;
+      byPaymentNet[methodKey] += amount;
     } else {
       totalExpense += amount;
       countExpense += 1;
+      byPaymentNet[methodKey] -= amount;
     }
     const curCat = categoryMap.get(cat) ?? { total: 0, count: 0 };
     curCat.total += amount;
@@ -616,7 +623,10 @@ export async function getReportDataForExport(startDate: string, endDate: string)
     endDate,
     totalIncome,
     totalExpense,
-    balance: totalIncome - totalExpense,
+    balance: byPaymentNet.efectivo,
+    totalEfectivo: byPaymentNet.efectivo,
+    totalTransferencia: byPaymentNet.transferencia,
+    totalTarjeta: byPaymentNet.tarjeta,
     transactionCount: sorted.length,
     countIncome,
     countExpense,
@@ -983,7 +993,7 @@ const REPORT_GENERATED = 'Generado el';
 
 function formatDateForExport(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' });
+  return d.toLocaleString('es-EC', { timeZone: 'America/Guayaquil', dateStyle: 'short', timeStyle: 'medium' });
 }
 
 /** Excel detallado multi-hoja para reporte de caja */
@@ -1118,7 +1128,10 @@ export async function buildCashReportExcelFull(
   return Buffer.from(buf);
 }
 
-/** Genera PDF del reporte de caja con pdfkit */
+/** Opciones de página: A4 horizontal para todo el reporte */
+const PDF_PAGE_OPTIONS = { margin: 45, size: 'A4' as const, layout: 'landscape' as const };
+
+/** Genera PDF del reporte de caja — horizontal, sin pie de página para evitar páginas en blanco */
 export async function buildCashReportPdf(
   data: CashReportExportData,
   reportType: string,
@@ -1126,7 +1139,7 @@ export async function buildCashReportPdf(
   generatedBy: string
 ): Promise<Buffer> {
   const PDFDocument = (await import('pdfkit')).default;
-  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  const doc = new PDFDocument(PDF_PAGE_OPTIONS);
   const chunks: Buffer[] = [];
   doc.on('data', (chunk: Buffer) => chunks.push(chunk));
   const finish = new Promise<Buffer>((resolve, reject) => {
@@ -1134,123 +1147,188 @@ export async function buildCashReportPdf(
     doc.on('error', reject);
   });
 
+  const margin = PDF_PAGE_OPTIONS.margin;
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+  const contentW = pageW - margin * 2;
+  const minSpaceForResumen = 340;
+
   const primary = '#0f172a';
   const secondary = '#64748b';
   const green = '#059669';
   const red = '#dc2626';
-  const lightBg = '#f8fafc';
+  const headerBg = '#1e293b';
+  const rowAlt = '#f8fafc';
+  const rowHeader = '#e2e8f0';
+  const boxBg = '#f1f5f9';
+  const accent = '#3b82f6';
   const rowH = 22;
-  const colW = [90, 50, 95, 70, 65, 70, 80];
-
-  function header() {
-    doc.fontSize(18).font('Helvetica-Bold').fillColor(primary).text('REPORTE DE CAJA', { align: 'center' });
-    doc.moveDown(0.5);
-    doc.fontSize(10).font('Helvetica').fillColor(secondary).text(SCHOOL_NAME, { align: 'center' });
-    doc.text(`Módulo: Caja · Tipo: ${reportType}`, { align: 'center' });
-    doc.text(`Rango: ${data.startDate} a ${data.endDate}`, { align: 'center' });
-    doc.text(`${REPORT_GENERATED} ${generatedAt} · Por: ${generatedBy}`, { align: 'center' });
-    doc.moveDown(1);
-  }
+  const colW = [62, 30, 165, 50, 56, 58, 58, 165];
+  const tableW = colW.reduce((a, b) => a + b, 0);
+  const tableX = margin + (contentW - tableW) / 2;
 
   function sectionTitle(title: string) {
-    doc.fontSize(11).font('Helvetica-Bold').fillColor(primary).text(title);
-    doc.moveDown(0.5);
+    doc.moveDown(0.4);
+    doc.fontSize(11).font('Helvetica-Bold').fillColor(primary).text(title, { align: 'left' });
+    doc.moveDown(0.35);
   }
 
-  // Encabezado
-  header();
+  doc.moveDown(0.8);
+  doc.fontSize(22).font('Helvetica-Bold').fillColor(headerBg).text('REPORTE DE CAJA', { align: 'center' });
+  doc.moveDown(0.3);
+  doc.fontSize(12).font('Helvetica').fillColor(secondary).text(SCHOOL_NAME, { align: 'center' });
+  doc.moveDown(0.5);
+  doc.fontSize(10).fillColor(primary).text(`Tipo: ${reportType}  ·  Rango: ${data.startDate} a ${data.endDate}`, { align: 'center' });
+  doc.text(`Generado: ${generatedAt}  ·  Por: ${generatedBy}`, { align: 'center' });
+  doc.moveDown(0.5);
+  doc.strokeColor(accent).lineWidth(1.5).moveTo(margin + contentW * 0.15, doc.y).lineTo(pageW - margin - contentW * 0.15, doc.y).stroke();
+  doc.moveDown(0.8);
 
-  // Resumen ejecutivo
   sectionTitle('Resumen ejecutivo');
-  const y0 = doc.y;
-  doc.font('Helvetica').fontSize(10);
-  doc.fillColor(secondary).text('Total movimientos:', 50, y0).fillColor(primary).text(String(data.transactionCount), 200, y0);
-  doc.fillColor(secondary).text('Total ingresos:', 50, y0 + rowH).fillColor(green).text(`$ ${data.totalIncome.toFixed(2)}`, 200, y0 + rowH);
-  doc.fillColor(secondary).text('Total egresos:', 50, y0 + rowH * 2).fillColor(red).text(`$ ${data.totalExpense.toFixed(2)}`, 200, y0 + rowH * 2);
-  doc.fillColor(secondary).text('Balance neto:', 50, y0 + rowH * 3).fillColor(primary).text(`$ ${data.balance.toFixed(2)}`, 200, y0 + rowH * 3);
-  doc.fillColor(secondary).text('Cant. ingresos:', 50, y0 + rowH * 4).fillColor(primary).text(String(data.countIncome), 200, y0 + rowH * 4);
-  doc.fillColor(secondary).text('Cant. egresos:', 50, y0 + rowH * 5).fillColor(primary).text(String(data.countExpense), 200, y0 + rowH * 5);
-  doc.moveDown(4);
+  const summaryBoxW = 320;
+  const summaryBoxX = margin + (contentW - summaryBoxW) / 2;
+  const summaryY0 = doc.y;
+  const lineH = 18;
+  const summaryLines = [
+    { label: 'Total movimientos', value: String(data.transactionCount), color: primary },
+    { label: 'Total ingresos', value: `$ ${data.totalIncome.toFixed(2)}`, color: green },
+    { label: 'Total egresos', value: `$ ${data.totalExpense.toFixed(2)}`, color: red },
+    { label: 'TOTAL EN EFECTIVO', value: `$ ${(data.totalEfectivo ?? 0).toFixed(2)}`, color: primary },
+    { label: 'TOTAL TRANSFERENCIAS', value: `$ ${(data.totalTransferencia ?? 0).toFixed(2)}`, color: primary },
+    { label: 'TOTAL TARJETA', value: `$ ${(data.totalTarjeta ?? 0).toFixed(2)}`, color: primary },
+    { label: 'Balance de caja (solo efectivo)', value: `$ ${data.balance.toFixed(2)}`, color: accent },
+    { label: 'Cant. ingresos / egresos', value: `${data.countIncome} / ${data.countExpense}`, color: secondary },
+  ];
+  const summaryBoxH = summaryLines.length * lineH + 24;
+  doc.roundedRect(summaryBoxX, summaryY0, summaryBoxW, summaryBoxH, 4).fillAndStroke(boxBg, primary);
+  doc.font('Helvetica').fontSize(9);
+  const valueBlockW = 115;
+  const labelBlockW = summaryBoxW - 28 - valueBlockW;
+  summaryLines.forEach((line, i) => {
+    const y = summaryY0 + 14 + i * lineH;
+    doc.fillColor(secondary).text(line.label, summaryBoxX + 14, y, { width: labelBlockW });
+    doc.fillColor(line.color).text(line.value, summaryBoxX + summaryBoxW - 14 - valueBlockW, y, { width: valueBlockW, align: 'right' });
+  });
+  doc.y = summaryY0 + summaryBoxH + 14;
+  doc.fillColor(primary);
 
-  // Tabla movimientos
   sectionTitle('Detalle de movimientos');
   const tableTop = doc.y;
-  const headers = ['Fecha', 'Tipo', 'Concepto', 'Categoría', 'Método', 'Monto', 'Usuario'];
-  doc.font('Helvetica-Bold').fontSize(9).fillColor(primary);
-  let x = 50;
+  const headers = ['Fecha', 'Tipo', 'Concepto', 'Categoría', 'Método', 'Monto', 'Usuario', 'Observaciones'];
+  doc.font('Helvetica-Bold').fontSize(8).fillColor(primary);
+  let x = tableX;
+  const headerPad = 3;
   headers.forEach((h, i) => {
-    doc.rect(x, tableTop, colW[i], rowH).fill(lightBg).stroke();
-    doc.fillColor(primary).text(h, x + 4, tableTop + 6, { width: colW[i] - 6 });
+    doc.rect(x, tableTop, colW[i], rowH).fill(rowHeader).stroke();
+    doc.fillColor(primary).text(h, x + headerPad, tableTop + 6, { width: colW[i] - headerPad * 2 });
     x += colW[i];
   });
   let y = tableTop + rowH;
+  const tableBreakY = pageH - 90;
   doc.font('Helvetica').fontSize(8);
-  for (const t of data.transactions) {
-    if (y > 700) {
-      doc.addPage();
-      doc.y = 50;
-      y = 50;
-      x = 50;
+  data.transactions.forEach((t, rowIndex) => {
+    x = tableX;
+    const amountStr = (t.type === 'income' ? '+' : '-') + ' $ ' + Number(t.amount).toFixed(2);
+    const row: string[] = [
+      formatDateForExport(t.created_at),
+      t.type === 'income' ? 'Ingreso' : 'Egreso',
+      t.concept ?? '',
+      categoryLabel(t),
+      PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+      amountStr,
+      t.created_by_name ?? '',
+      t.notes ?? '',
+    ];
+    let cellHeight = rowH;
+    for (let i = 0; i < row.length; i++) {
+      const w = colW[i] - 8;
+      const h = doc.heightOfString(row[i], { width: w });
+      cellHeight = Math.max(cellHeight, Math.ceil(h) + 10);
+    }
+    if (y + cellHeight > tableBreakY) {
+      doc.addPage(PDF_PAGE_OPTIONS);
+      doc.y = margin + 18;
+      y = doc.y;
+      x = tableX;
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(primary);
       headers.forEach((h, i) => {
-        doc.rect(x, y - rowH, colW[i], rowH).fill(lightBg).stroke();
-        doc.font('Helvetica-Bold').fillColor(primary).text(h, x + 4, y - rowH + 6, { width: colW[i] - 6 });
+        doc.rect(x, y - rowH, colW[i], rowH).fill(rowHeader).stroke();
+        doc.text(h, x + headerPad, y - rowH + 6, { width: colW[i] - headerPad * 2 });
         x += colW[i];
       });
       y += rowH;
       doc.font('Helvetica').fontSize(8);
     }
-    x = 50;
-    const amountStr = (t.type === 'income' ? '+' : '-') + ' $ ' + Number(t.amount).toFixed(2);
-    const row: string[] = [
-      formatDateForExport(t.created_at),
-      t.type === 'income' ? 'Ingreso' : 'Egreso',
-      (t.concept || '').slice(0, 22),
-      categoryLabel(t).slice(0, 14),
-      (PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method).slice(0, 8),
-      amountStr,
-      (t.created_by_name || '').slice(0, 18),
-    ];
+    x = tableX;
+    const isAlt = rowIndex % 2 === 1;
+    if (isAlt) doc.rect(tableX, y, tableW, cellHeight).fill(rowAlt);
     row.forEach((cell, i) => {
-      doc.rect(x, y, colW[i], rowH).stroke();
+      doc.rect(x, y, colW[i], cellHeight).stroke();
       if (i === 5) doc.fillColor(t.type === 'income' ? green : red);
       else doc.fillColor(primary);
-      doc.text(cell, x + 4, y + 5, { width: colW[i] - 6 });
+      const cellPad = 4;
+      const cellWidth = colW[i] - cellPad * 2;
+      const align = i === 5 ? 'right' : 'left';
+      doc.text(cell, x + cellPad, y + 6, { width: cellWidth, align });
       x += colW[i];
     });
     doc.fillColor(primary);
-    y += rowH;
+    y += cellHeight;
+  });
+
+  doc.y = y + 18;
+  if (doc.y > pageH - minSpaceForResumen) {
+    doc.addPage(PDF_PAGE_OPTIONS);
+    doc.y = margin + 18;
   }
 
-  doc.moveDown(1);
-  const sumY = doc.y;
+  const leftColX = margin + 20;
+  const labelW = 240;
+  const valueW = 100;
+
   sectionTitle('Resumen por categoría');
   doc.font('Helvetica').fontSize(9);
-  let cy = sumY + 5;
-  for (const r of data.byCategory) {
-    doc.fillColor(secondary).text(r.label, 50, cy).fillColor(primary).text(`$ ${r.total.toFixed(2)} (${r.count})`, 250, cy);
-    cy += 18;
-  }
-  doc.moveDown(1);
+  let cy = doc.y + 4;
+  data.byCategory.forEach((r) => {
+    doc.fillColor(secondary).text(r.label, leftColX, cy, { width: labelW });
+    doc.fillColor(primary).text(`$ ${r.total.toFixed(2)} (${r.count})`, leftColX + labelW, cy, { width: valueW, align: 'right' });
+    cy += 16;
+  });
+  doc.y = cy + 8;
   sectionTitle('Resumen por método de pago');
-  let py = doc.y + 5;
-  for (const r of data.byPaymentMethod) {
-    doc.fillColor(secondary).text(r.method, 50, py).fillColor(primary).text(`$ ${r.total.toFixed(2)} (${r.count})`, 250, py);
-    py += 18;
-  }
+  let py = doc.y + 4;
+  const methodDisplay = [
+    { method: 'Efectivo', total: data.totalEfectivo ?? 0, count: data.byPaymentMethod.find((p) => p.method === 'Efectivo')?.count ?? 0 },
+    { method: 'Transferencia', total: data.totalTransferencia ?? 0, count: data.byPaymentMethod.find((p) => p.method === 'Transferencia')?.count ?? 0 },
+    { method: 'Tarjeta', total: data.totalTarjeta ?? 0, count: data.byPaymentMethod.find((p) => p.method === 'Tarjeta')?.count ?? 0 },
+  ];
+  methodDisplay.forEach((r) => {
+    doc.fillColor(secondary).text(r.method, leftColX, py, { width: labelW });
+    doc.fillColor(primary).text(`$ ${r.total.toFixed(2)} (${r.count})`, leftColX + labelW, py, { width: valueW, align: 'right' });
+    py += 16;
+  });
+  doc.y = py + 12;
 
-  doc.moveDown(2);
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(primary);
-  doc.text('Resumen final del período', 50, doc.y);
-  doc.font('Helvetica').fillColor(green).text(`Ingreso total: $ ${data.totalIncome.toFixed(2)}`, 50, doc.y + 20);
-  doc.fillColor(red).text(`Egreso total: $ ${data.totalExpense.toFixed(2)}`, 50, doc.y + 38);
-  doc.fillColor(primary).text(`Balance: $ ${data.balance.toFixed(2)}`, 50, doc.y + 56);
-
-  doc.fontSize(8).fillColor(secondary).text(
-    `Colorados Drive - Reporte de Caja - ${data.startDate} a ${data.endDate} - ${generatedAt}`,
-    50,
-    doc.page.height - 30,
-    { align: 'center', width: doc.page.width - 100 }
-  );
+  const finalBoxW = 380;
+  const finalBoxX = margin + (contentW - finalBoxW) / 2;
+  const finalBoxPad = 18;
+  const finalValueW = 95;
+  const finalLabelX = finalBoxX + finalBoxPad;
+  const finalValueX = finalBoxX + finalBoxW - finalBoxPad - finalValueW;
+  const finalY0 = doc.y;
+  const finalH = 118;
+  doc.roundedRect(finalBoxX, finalY0, finalBoxW, finalH, 4).fillAndStroke(boxBg, accent);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(primary).text('Resumen final del período', finalLabelX, finalY0 + 12, { width: finalBoxW - finalBoxPad * 2 });
+  doc.font('Helvetica').fontSize(9);
+  doc.fillColor(green).text(`Ingreso total: $ ${data.totalIncome.toFixed(2)}`, finalLabelX, finalY0 + 30);
+  doc.fillColor(red).text(`Egreso total: $ ${data.totalExpense.toFixed(2)}`, finalLabelX, finalY0 + 46);
+  doc.fillColor(secondary).text('TOTAL EN EFECTIVO:', finalLabelX, finalY0 + 62, { width: finalValueX - finalLabelX - 6 });
+  doc.fillColor(primary).text(`$ ${(data.totalEfectivo ?? 0).toFixed(2)}`, finalValueX, finalY0 + 62, { width: finalValueW, align: 'right' });
+  doc.fillColor(secondary).text('TOTAL TRANSFERENCIAS:', finalLabelX, finalY0 + 78, { width: finalValueX - finalLabelX - 6 });
+  doc.fillColor(primary).text(`$ ${(data.totalTransferencia ?? 0).toFixed(2)}`, finalValueX, finalY0 + 78, { width: finalValueW, align: 'right' });
+  doc.fillColor(secondary).text('TOTAL TARJETA:', finalLabelX, finalY0 + 94, { width: finalValueX - finalLabelX - 6 });
+  doc.fillColor(primary).text(`$ ${(data.totalTarjeta ?? 0).toFixed(2)}`, finalValueX, finalY0 + 94, { width: finalValueW, align: 'right' });
+  doc.font('Helvetica-Bold').fillColor(accent).text(`Balance de caja (solo efectivo): $ ${data.balance.toFixed(2)}`, finalLabelX, finalY0 + 102);
 
   doc.end();
   return finish;

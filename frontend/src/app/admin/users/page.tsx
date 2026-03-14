@@ -25,6 +25,9 @@ interface UserRow {
   schedule_id: string | null;
   total_amount: number | null;
   amount_paid: number | null;
+  original_price?: number | null;
+  discount_applied?: number | null;
+  discount_note?: string | null;
   birth_date?: string | null;
   address?: string | null;
   phone?: string | null;
@@ -79,6 +82,7 @@ export default function AdminUsersPage() {
     scheduleType: 'single' | 'weekdays' | 'weekends'; dayOfWeek: number; startTime: string; practiceWeeks: 1 | 2 | 3 | '';
     practiceHoursPerDay: 1 | 2 | 3 | 4;
     paymentType: 'full' | 'partial'; initialPaymentAmount: string;
+    discountApplied: string;
   }>({
     email: '', password: '', fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '',
     birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '',
@@ -86,6 +90,7 @@ export default function AdminUsersPage() {
     role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '',
     practiceHoursPerDay: 1,
     paymentType: 'partial', initialPaymentAmount: '',
+    discountApplied: '0',
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -122,16 +127,18 @@ export default function AdminUsersPage() {
   const [editSuccess, setEditSuccess] = useState('');
   const appliedEnrollmentParamsRef = useRef(false);
 
-  const load = (roleOverride?: 'student' | 'instructor' | 'admin' | '') => {
+  const load = (roleOverride?: 'student' | 'instructor' | 'admin' | '', cohortIdOverride?: string, searchOverride?: string) => {
     if (!token) return;
     setApiError('');
     const headers = getAuthHeaders(token);
     const params = new URLSearchParams();
     const effectiveRole = roleOverride !== undefined ? roleOverride : filterRole;
-    if (searchQuery.trim()) params.set('search', searchQuery.trim());
+    const effectiveSearch = searchOverride !== undefined ? searchOverride : searchQuery;
+    const effectiveCohortId = cohortIdOverride !== undefined ? cohortIdOverride : filterCohortId;
+    if (effectiveSearch.trim()) params.set('search', effectiveSearch.trim());
     if (effectiveRole) params.set('role', effectiveRole);
     if (effectiveRole === 'student' || effectiveRole === '') {
-      if (filterCohortId) params.set('cohortId', filterCohortId);
+      if (effectiveCohortId) params.set('cohortId', effectiveCohortId);
     }
     const url = params.toString() ? `${API_URL}/api/admin/users?${params.toString()}` : `${API_URL}/api/admin/users`;
     fetch(url, { headers })
@@ -312,8 +319,21 @@ export default function AdminUsersPage() {
     }
     const courseForPrice = form.courseId ? courses.find((c) => c.id === form.courseId) : null;
     const totalPrice = courseForPrice && typeof (courseForPrice as { price?: number }).price === 'number' ? (courseForPrice as { price?: number }).price! : 0;
-    const initialPaymentAmount = form.role === 'student' && totalPrice != null
-      ? (form.paymentType === 'full' ? totalPrice : (parseFloat(form.initialPaymentAmount) || 0))
+    const discountNum = form.role === 'student' ? Math.max(0, parseFloat(form.discountApplied) || 0) : 0;
+    const totalFinal = form.role === 'student' ? Math.max(0, totalPrice - Math.min(discountNum, totalPrice)) : 0;
+    if (form.role === 'student' && (discountNum < 0 || discountNum > totalPrice)) {
+      setError('El descuento debe ser mayor o igual a 0 y no puede superar el precio del curso.');
+      return;
+    }
+    if (form.role === 'student' && form.paymentType === 'partial') {
+      const abono = parseFloat(form.initialPaymentAmount) || 0;
+      if (abono > totalFinal) {
+        setError(`El abono no puede ser mayor al total final a pagar ($${totalFinal.toFixed(2)}).`);
+        return;
+      }
+    }
+    const initialPaymentAmount = form.role === 'student' && totalFinal != null
+      ? (form.paymentType === 'full' ? totalFinal : (parseFloat(form.initialPaymentAmount) || 0))
       : undefined;
     try {
       const body: Record<string, unknown> = {
@@ -347,6 +367,9 @@ export default function AdminUsersPage() {
       if (form.role === 'student' && initialPaymentAmount !== undefined) {
         body.initialPaymentAmount = initialPaymentAmount;
       }
+      if (form.role === 'student' && discountNum > 0) {
+        body.discountApplied = discountNum;
+      }
       if (form.role === 'student' && (form.practiceHoursPerDay ?? 1) >= 1 && (form.practiceHoursPerDay ?? 1) <= 4) {
         body.practiceHoursPerDay = form.practiceHoursPerDay ?? 1;
       }
@@ -362,7 +385,7 @@ export default function AdminUsersPage() {
         throw new Error(msg);
       }
       setSuccess('Usuario creado');
-      setForm({ email: '', password: '', fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '', birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '', practiceStartDate: '', practiceEndDate: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', practiceHoursPerDay: 1, paymentType: 'partial', initialPaymentAmount: '' });
+      setForm({ email: '', password: '', fullName: '', cedula: '', gender: '', citizenship: '', bloodType: '', birthDate: '', address: '', phone: '', startDate: '', endDate: '', modality: '', practiceStartDate: '', practiceEndDate: '', role: 'student', courseId: '', cohortId: '', instructorId: '', scheduleType: 'weekdays', dayOfWeek: 0, startTime: '', practiceWeeks: '', practiceHoursPerDay: 1, paymentType: 'partial', initialPaymentAmount: '', discountApplied: '0' });
       setShowForm(false);
       load();
     } catch (err) {
@@ -534,10 +557,12 @@ export default function AdminUsersPage() {
           {apiError}
         </div>
       )}
-      <div className="flex flex-wrap justify-between items-center gap-4">
-        <div className="flex flex-wrap gap-2 flex-1 min-w-0 w-full sm:w-auto">
-          <select
-            value={filterRole}
+
+      <div className="rounded-xl border border-neutral-200 bg-white p-4 sm:p-5 shadow-sm">
+        <div className="flex flex-wrap justify-between items-center gap-4">
+          <div className="flex flex-wrap gap-2 flex-1 min-w-0 w-full sm:w-auto">
+            <select
+              value={filterRole}
             onChange={(e) => {
               const newRole = e.target.value as 'student' | 'instructor' | 'admin' | '';
               setFilterRole(newRole);
@@ -554,7 +579,12 @@ export default function AdminUsersPage() {
           </select>
           <select
             value={filterCohortId}
-            onChange={(e) => { setFilterCohortId(e.target.value); setLoading(true); load(); }}
+            onChange={(e) => {
+              const newCohortId = e.target.value;
+              setFilterCohortId(newCohortId);
+              setLoading(true);
+              load(undefined, newCohortId);
+            }}
             className="form-select w-full sm:min-w-[200px] sm:w-auto"
             aria-label="Filtrar por número de curso"
             style={{ display: (filterRole === 'student' || filterRole === '') ? undefined : 'none' }}
@@ -590,8 +620,38 @@ export default function AdminUsersPage() {
           >
             {showForm ? 'Cancelar' : 'Crear usuario'}
           </button>
+          </div>
         </div>
       </div>
+
+      {(() => {
+        const totalCount = users.length;
+        const cohortLabel = filterCohortId && (filterRole === 'student' || filterRole === '')
+          ? cohorts.find((c) => c.id === filterCohortId)
+          : null;
+        const courseName = cohortLabel ? courses.find((cr) => cr.id === cohortLabel.course_id)?.name : null;
+        const summaryLabel = cohortLabel && courseName
+          ? `Total de alumnos en este curso: ${totalCount}`
+          : filterRole === 'student'
+            ? `Total de alumnos: ${totalCount}`
+            : filterRole === 'instructor'
+              ? `Total de instructores: ${totalCount}`
+              : filterRole === 'admin'
+                ? `Total de administradores: ${totalCount}`
+                : `Total de usuarios: ${totalCount}`;
+        return (
+          <div className="mt-5 mb-3 px-1">
+            <p className="text-sm font-medium text-neutral-700">
+              {summaryLabel}
+            </p>
+            {searchQuery.trim() && totalCount > 0 && (
+              <p className="text-xs text-neutral-500 mt-0.5">
+                Mostrando resultados para &quot;{searchQuery.trim()}&quot;
+              </p>
+            )}
+          </div>
+        );
+      })()}
 
       {showForm && (
         <form onSubmit={handleCreate} className="form-card overflow-hidden">
@@ -835,27 +895,91 @@ export default function AdminUsersPage() {
                   </div>
                 </div>
                 {form.courseId && (
-                  <div className="mt-4 rounded-xl border border-neutral-200 bg-white p-4">
-                    <h5 className="mb-2 text-sm font-semibold text-neutral-700">Pago del curso</h5>
+                  <div className="mt-4 rounded-xl border border-neutral-200 bg-white p-5">
+                    <h5 className="mb-3 text-sm font-semibold text-neutral-700">Pago del curso</h5>
                     {(() => {
                       const course = courses.find((c) => c.id === form.courseId);
-                      const totalPrice = course && typeof (course as { price?: number }).price === 'number' ? (course as { price?: number }).price! : 0;
+                      const priceOriginal = course && typeof (course as { price?: number }).price === 'number' ? (course as { price?: number }).price! : 0;
+                      const discount = Math.max(0, Math.min(priceOriginal, parseFloat(form.discountApplied) || 0));
+                      const totalFinal = Math.max(0, priceOriginal - discount);
                       return (
                         <>
-                          <p className="mb-3 text-sm text-neutral-600">Total del curso: <span className="font-semibold text-neutral-900">${totalPrice.toFixed(2)}</span></p>
-                          <div className="flex flex-wrap gap-4">
+                          <div className="space-y-2 mb-4">
+                            <p className="text-sm text-neutral-600 flex justify-between">
+                              <span>Precio original:</span>
+                              <span className="font-semibold text-neutral-900">${priceOriginal.toFixed(2)}</span>
+                            </p>
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <label className="text-sm text-neutral-600">Descuento aplicado:</label>
+                              <div className="flex items-center gap-2">
+                                <span className="text-sm text-neutral-500">$</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  max={priceOriginal}
+                                  value={form.discountApplied}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    const d = Math.max(0, Math.min(priceOriginal, parseFloat(v) || 0));
+                                    const newTotal = Math.max(0, priceOriginal - d);
+                                    setForm({
+                                      ...form,
+                                      discountApplied: v,
+                                      initialPaymentAmount: form.paymentType === 'full' ? String(newTotal) : form.initialPaymentAmount,
+                                    });
+                                  }}
+                                  placeholder="0.00"
+                                  className="form-input w-24 text-right"
+                                />
+                              </div>
+                            </div>
+                            {discount > 0 && (
+                              <p className="text-sm text-green-700 flex justify-between font-medium">
+                                <span>Descuento:</span>
+                                <span>-${discount.toFixed(2)}</span>
+                              </p>
+                            )}
+                            <p className="text-sm font-semibold text-neutral-900 flex justify-between pt-2 border-t border-neutral-100">
+                              <span>Total final a pagar:</span>
+                              <span className="text-lg text-red-700">${totalFinal.toFixed(2)}</span>
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-4 items-center">
                             <label className="flex items-center gap-2 cursor-pointer">
-                              <input type="radio" name="paymentType" checked={form.paymentType === 'full'} onChange={() => setForm({ ...form, paymentType: 'full', initialPaymentAmount: totalPrice ? String(totalPrice) : '' })} className="rounded border-neutral-300 text-red-600 focus:ring-red-500" />
+                              <input
+                                type="radio"
+                                name="paymentType"
+                                checked={form.paymentType === 'full'}
+                                onChange={() => setForm({ ...form, paymentType: 'full', initialPaymentAmount: totalFinal ? String(totalFinal) : '' })}
+                                className="rounded border-neutral-300 text-red-600 focus:ring-red-500"
+                              />
                               <span className="text-sm font-medium text-neutral-800">Paga todo</span>
                             </label>
                             <label className="flex items-center gap-2 cursor-pointer">
-                              <input type="radio" name="paymentType" checked={form.paymentType === 'partial'} onChange={() => setForm({ ...form, paymentType: 'partial' })} className="rounded border-neutral-300 text-red-600 focus:ring-red-500" />
+                              <input
+                                type="radio"
+                                name="paymentType"
+                                checked={form.paymentType === 'partial'}
+                                onChange={() => setForm({ ...form, paymentType: 'partial' })}
+                                className="rounded border-neutral-300 text-red-600 focus:ring-red-500"
+                              />
                               <span className="text-sm font-medium text-neutral-800">Abona</span>
                             </label>
                             {form.paymentType === 'partial' && (
                               <span className="flex items-center gap-2">
-                                <span className="text-sm text-neutral-600">$</span>
-                                <input type="number" min="0" step="0.01" value={form.initialPaymentAmount} onChange={(e) => setForm({ ...form, initialPaymentAmount: e.target.value })} placeholder="0.00" className="form-input w-28" />
+                                <span className="text-sm text-neutral-600">Monto abonado $</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  max={totalFinal}
+                                  value={form.initialPaymentAmount}
+                                  onChange={(e) => setForm({ ...form, initialPaymentAmount: e.target.value })}
+                                  placeholder="0.00"
+                                  className="form-input w-28"
+                                />
+                                <span className="text-xs text-neutral-500">(máx. ${totalFinal.toFixed(2)})</span>
                               </span>
                             )}
                           </div>
@@ -880,31 +1004,33 @@ export default function AdminUsersPage() {
         </form>
       )}
 
-      <div className="table-wrap">
+      <div className="rounded-xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-neutral-500">Cargando...</div>
+          <div className="p-10 text-center text-neutral-500">Cargando...</div>
         ) : (
           <div className="overflow-x-auto -mx-2 sm:mx-0">
-            <table className="table-pro min-w-[480px] w-full">
+            <table className="table-pro min-w-[520px] w-full">
             <thead>
-              <tr>
-                <th className="!pl-6 !pr-8 !py-4 w-[min(220px,35%)]">Usuario</th>
-                <th className="!px-6 !py-4">Curso</th>
-                <th className="!px-6 !py-4">Horario</th>
-                <th className="!px-6 !py-4 text-center w-36 min-w-[120px]">Debe</th>
-                <th className="!px-6 !py-4">Actividad</th>
-                <th className="!pr-6 !pl-4 !py-4 w-40 text-right">Acciones</th>
+              <tr className="border-b border-neutral-200 bg-neutral-50/80">
+                <th className="!pl-4 !pr-2 !py-3.5 w-12 text-center text-xs font-semibold uppercase tracking-wider text-neutral-500">#</th>
+                <th className="!pl-4 !pr-6 !py-3.5 w-[min(220px,32%)] text-left text-xs font-semibold uppercase tracking-wider text-neutral-600">Usuario</th>
+                <th className="!px-6 !py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-neutral-600">Curso</th>
+                <th className="!px-6 !py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-neutral-600">Horario</th>
+                <th className="!px-6 !py-3.5 text-center w-36 min-w-[120px] text-xs font-semibold uppercase tracking-wider text-neutral-600">Debe</th>
+                <th className="!px-6 !py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-neutral-600">Actividad</th>
+                <th className="!pr-6 !pl-4 !py-3.5 w-40 text-right text-xs font-semibold uppercase tracking-wider text-neutral-600">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => {
+              {users.map((u, index) => {
                 const debe = u.role === 'student' && (u.total_amount != null || u.amount_paid != null)
                   ? Math.max(0, (Number(u.total_amount) || 0) - (Number(u.amount_paid) || 0))
                   : null;
                 const debeIsZero = debe !== null && debe === 0;
                 return (
-                <tr key={u.id} className="border-b border-neutral-100 hover:bg-neutral-50/80">
-                  <td className="!pl-6 !pr-8 !py-5 align-top">
+                <tr key={u.id} className="border-b border-neutral-100 hover:bg-neutral-50/60 transition-colors">
+                  <td className="!pl-4 !pr-2 !py-4 text-center text-neutral-500 font-medium align-top tabular-nums">{index + 1}</td>
+                  <td className="!pl-4 !pr-6 !py-4 align-top">
                     <p className="font-semibold text-neutral-900 text-[15px] leading-tight">{u.full_name || u.email}</p>
                     <p className="text-sm text-neutral-500 mt-0.5">{u.email}</p>
                   </td>
@@ -1029,11 +1155,26 @@ export default function AdminUsersPage() {
               {userDetailModal.role === 'student' && (userDetailModal.total_amount != null || userDetailModal.amount_paid != null) && (
                 <div className="rounded-xl border border-neutral-200 bg-neutral-50/50 p-4">
                   <h4 className="font-medium text-neutral-800 mb-3">Pagos del curso</h4>
-                  <div className="grid grid-cols-3 gap-2 text-sm mb-3">
-                    <div><span className="text-neutral-500">Total:</span> <span className="font-medium">${(Number(userDetailModal.total_amount) || 0).toFixed(2)}</span></div>
-                    <div><span className="text-neutral-500">Abonado:</span> <span className="font-medium text-green-700">${(Number(userDetailModal.amount_paid) || 0).toFixed(2)}</span></div>
-                    <div><span className="text-neutral-500">Debe:</span> <span className="font-medium text-red-700">${Math.max(0, (Number(userDetailModal.total_amount) || 0) - (Number(userDetailModal.amount_paid) || 0)).toFixed(2)}</span></div>
-                  </div>
+                  {(() => {
+                    const totalFinal = Number(userDetailModal.total_amount) || 0;
+                    const paid = Number(userDetailModal.amount_paid) || 0;
+                    const debe = Math.max(0, totalFinal - paid);
+                    const hasDiscount = Number(userDetailModal.discount_applied) > 0;
+                    const originalPrice = userDetailModal.original_price != null ? Number(userDetailModal.original_price) : totalFinal;
+                    return (
+                      <div className="space-y-2 text-sm mb-3">
+                        {hasDiscount && (
+                          <>
+                            <div className="flex justify-between"><span className="text-neutral-500">Total original:</span> <span className="font-medium">${originalPrice.toFixed(2)}</span></div>
+                            <div className="flex justify-between"><span className="text-neutral-500">Descuento aplicado:</span> <span className="font-medium text-green-700">${(userDetailModal.discount_applied ?? 0).toFixed(2)}</span></div>
+                          </>
+                        )}
+                        <div className="flex justify-between"><span className="text-neutral-500">Total final:</span> <span className="font-semibold">${totalFinal.toFixed(2)}</span></div>
+                        <div className="flex justify-between"><span className="text-neutral-500">Abonado:</span> <span className="font-medium text-green-700">${paid.toFixed(2)}</span></div>
+                        <div className="flex justify-between"><span className="text-neutral-500">Debe:</span> <span className="font-medium text-red-700">${debe.toFixed(2)}</span></div>
+                      </div>
+                    );
+                  })()}
                   {userPayments.length > 0 && (
                     <ul className="mb-3 space-y-1 text-sm">
                       {userPayments.map((p) => (

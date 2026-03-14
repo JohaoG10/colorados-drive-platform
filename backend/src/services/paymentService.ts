@@ -6,6 +6,7 @@ export interface PaymentRow {
   amount: number;
   paid_at: string;
   note: string | null;
+  discount_applied?: number | null;
   created_by: string | null;
   created_at: string;
 }
@@ -13,7 +14,7 @@ export interface PaymentRow {
 export async function listPaymentsByUser(userId: string): Promise<PaymentRow[]> {
   const { data, error } = await supabaseAdmin
     .from('payments')
-    .select('id, user_id, amount, paid_at, note, created_by, created_at')
+    .select('id, user_id, amount, paid_at, note, discount_applied, created_by, created_at')
     .eq('user_id', userId)
     .order('paid_at', { ascending: false });
   if (error) throw new Error(error.message);

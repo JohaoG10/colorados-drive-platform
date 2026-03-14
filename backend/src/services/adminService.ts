@@ -47,10 +47,10 @@ const isExtraColumnsError = (err: unknown) => {
   return /birth_date|address|phone|start_date|end_date|modality|practice_start_date|practice_end_date|gender|schema|does not exist/i.test(msg);
 };
 
-const BASE_SELECT_MINIMAL = 'id, email, full_name, role, course_id, cohort_id, cedula, citizenship, blood_type, schedule_id, total_amount, amount_paid, created_at, courses(name, code), cohorts(id, name, code, course_id)';
+const BASE_SELECT_MINIMAL = 'id, email, full_name, role, course_id, cohort_id, cedula, citizenship, blood_type, schedule_id, total_amount, amount_paid, original_price, discount_applied, discount_note, created_at, courses(name, code), cohorts(id, name, code, course_id)';
 
 export async function listUsers(filters?: { courseId?: string; cohortId?: string; role?: string; search?: string }) {
-  const baseSelect = 'id, email, full_name, role, course_id, cohort_id, cedula, gender, citizenship, blood_type, schedule_id, total_amount, amount_paid, created_at, courses(name, code), cohorts(id, name, code, course_id)';
+  const baseSelect = 'id, email, full_name, role, course_id, cohort_id, cedula, gender, citizenship, blood_type, schedule_id, total_amount, amount_paid, original_price, discount_applied, discount_note, created_at, courses(name, code), cohorts(id, name, code, course_id)';
   let query = supabaseAdmin
     .from('user_profiles')
     .select(`${baseSelect}, ${EXTRA_PROFILE_COLUMNS}`);

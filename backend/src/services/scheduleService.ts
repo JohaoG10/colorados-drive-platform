@@ -326,6 +326,190 @@ export async function listScheduleBlocksForEnrollment(
   return blocks;
 }
 
+/** Horario agrupado por curso y hora: una entrada por (cohort, time), con lista de instructores y cupos = instructores con 0 alumnos. */
+export interface ScheduleSlotGroupedByTime {
+  cohortId: string;
+  courseName: string;
+  cohortName: string;
+  timeLabel: string;
+  startTime: string;
+  dayOfWeek: number;
+  days: number[]; // días en que aplica (ej. [1,2,3,4,5] para weekdays)
+  scheduleType: 'weekdays' | 'weekends' | 'single';
+  instructors: { instructorId: string; instructorName: string; enrolledCount: number; firstSlotId: string }[];
+  cuposDisponibles: number;
+}
+
+const HOURS_ORDER = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'];
+
+/** Agrupa bloques por (cohort, time). Si weekStartISO y weekEndISO se pasan, se construye desde la disponibilidad real (misma fuente que Disponibilidad por instructor). */
+export async function listScheduleSlotsGroupedByTime(
+  cohortId?: string,
+  instructorId?: string,
+  weekStartISO?: string,
+  weekEndISO?: string
+): Promise<ScheduleSlotGroupedByTime[]> {
+  const weekStart = weekStartISO ? parseLocalDate(weekStartISO) : null;
+  const weekEnd = weekEndISO ? parseLocalDate(weekEndISO) : null;
+  const useWeekAvailability = weekStartISO && weekEndISO && weekStart && weekEnd;
+
+  if (useWeekAvailability) {
+    return listScheduleSlotsFromWeekAvailability(cohortId, instructorId, weekStartISO!, weekEndISO!, weekStart!, weekEnd!);
+  }
+
+  const blocks = await listScheduleBlocksForEnrollment(cohortId, instructorId);
+  const key = (b: ScheduleBlockForEnrollment) => `${b.cohortId}|${b.timeLabel}`;
+  const bySlot = new Map<string, ScheduleBlockForEnrollment[]>();
+  for (const b of blocks) {
+    const k = key(b);
+    if (!bySlot.has(k)) bySlot.set(k, []);
+    bySlot.get(k)!.push(b);
+  }
+  const result: ScheduleSlotGroupedByTime[] = [];
+  for (const [, group] of bySlot) {
+    const first = group[0];
+    const instructors = group.map((b) => ({
+      instructorId: b.instructorId,
+      instructorName: b.instructorName,
+      enrolledCount: b.enrolledCount,
+      firstSlotId: b.firstSlotId,
+    }));
+    const cuposDisponibles = instructors.filter((i) => i.enrolledCount === 0).length;
+    const days = first.scheduleType === 'weekdays' ? [1, 2, 3, 4, 5] : first.scheduleType === 'weekends' ? [6, 7] : [first.dayOfWeek];
+    const startTimeNorm = normalizeTimeToHHmm(first.startTime);
+    result.push({
+      cohortId: first.cohortId,
+      courseName: first.courseName,
+      cohortName: first.cohortName,
+      timeLabel: first.timeLabel,
+      startTime: startTimeNorm,
+      dayOfWeek: first.dayOfWeek,
+      days,
+      scheduleType: first.scheduleType,
+      instructors,
+      cuposDisponibles,
+    });
+  }
+
+  result.sort((a, b) => {
+    const byCourse = a.courseName.localeCompare(b.courseName);
+    if (byCourse !== 0) return byCourse;
+    const ai = HOURS_ORDER.indexOf(a.startTime);
+    const bi = HOURS_ORDER.indexOf(b.startTime);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    return a.timeLabel.localeCompare(b.timeLabel);
+  });
+  return result;
+}
+
+/** Construye horarios por curso desde la disponibilidad real de la semana (misma lógica que Disponibilidad por instructor). */
+async function listScheduleSlotsFromWeekAvailability(
+  cohortId?: string,
+  instructorId?: string,
+  weekStartISO: string,
+  weekEndISO: string,
+  weekStart: Date,
+  weekEnd: Date
+): Promise<ScheduleSlotGroupedByTime[]> {
+  const rows = await listCourseSchedules(cohortId, instructorId);
+  type PairKey = string;
+  const pairInfo = new Map<PairKey, { cohortId: string; courseName: string; cohortName: string; instructorId: string; instructorName: string }>();
+  for (const r of rows) {
+    const k: PairKey = `${r.cohort_id}-${r.instructor_id}`;
+    if (pairInfo.has(k)) continue;
+    const cohort = r.cohorts as { name?: string; code?: string; courses?: { name?: string } } | null;
+    const courseName = cohort?.courses?.name ?? 'Curso';
+    const cohortName = cohort?.name ?? (cohort as { code?: string } | null)?.code ?? '';
+    const instr = r.instructors as { id: string; full_name?: string } | null;
+    pairInfo.set(k, {
+      cohortId: r.cohort_id,
+      courseName,
+      cohortName,
+      instructorId: r.instructor_id,
+      instructorName: instr?.full_name ?? '—',
+    });
+  }
+
+  const slotKey = (c: string, t: string) => `${c}-${normalizeTimeToHHmm(t)}`;
+  const bySlot = new Map<string, {
+    cohortId: string;
+    courseName: string;
+    cohortName: string;
+    startTime: string;
+    instructors: Map<string, { instructorName: string; firstSlotId: string }>;
+    days: Set<number>;
+  }>();
+
+  for (const [, info] of pairInfo) {
+    const { free } = await getInstructorAvailabilityForWeek(info.instructorId, weekStartISO, weekEndISO, info.cohortId);
+    for (const f of free) {
+      const startTime = normalizeTimeToHHmm(f.start_time);
+      const [y, m, d] = f.date.slice(0, 10).split('-').map(Number);
+      const dayOfWeek = getDayOfWeek(new Date(y, m - 1, d));
+      const k = slotKey(info.cohortId, startTime);
+      if (!bySlot.has(k)) {
+        bySlot.set(k, {
+          cohortId: info.cohortId,
+          courseName: info.courseName,
+          cohortName: info.cohortName,
+          startTime,
+          instructors: new Map(),
+          days: new Set(),
+        });
+      }
+      const slot = bySlot.get(k)!;
+      if (!slot.instructors.has(info.instructorId)) {
+        slot.instructors.set(info.instructorId, { instructorName: info.instructorName, firstSlotId: f.schedule_id ?? '' });
+      }
+      slot.days.add(dayOfWeek);
+    }
+  }
+
+  const result: ScheduleSlotGroupedByTime[] = [];
+  for (const [, s] of bySlot) {
+    const days = Array.from(s.days).sort((a, b) => a - b);
+    const scheduleType: 'weekdays' | 'weekends' | 'single' =
+      days.length === 5 && days.every((d, i) => d === [1, 2, 3, 4, 5][i]) ? 'weekdays'
+        : days.length === 2 && days.includes(6) && days.includes(7) ? 'weekends'
+        : 'single';
+    let timeLabel: string;
+    if (scheduleType === 'weekdays') timeLabel = `Lunes a Viernes ${s.startTime}`;
+    else if (scheduleType === 'weekends') timeLabel = `Sábado y Domingo ${s.startTime}`;
+    else {
+      const dayLabels = days.map((d) => ['', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'][d] ?? String(d)).join(', ');
+      timeLabel = `${dayLabels} ${s.startTime}`;
+    }
+    const instructors = Array.from(s.instructors.entries()).map(([id, v]) => ({
+      instructorId: id,
+      instructorName: v.instructorName,
+      enrolledCount: 0,
+      firstSlotId: v.firstSlotId,
+    }));
+    result.push({
+      cohortId: s.cohortId,
+      courseName: s.courseName,
+      cohortName: s.cohortName,
+      timeLabel,
+      startTime: s.startTime,
+      dayOfWeek: days[0] ?? 1,
+      days,
+      scheduleType,
+      instructors,
+      cuposDisponibles: instructors.length,
+    });
+  }
+
+  result.sort((a, b) => {
+    const byCourse = a.courseName.localeCompare(b.courseName);
+    if (byCourse !== 0) return byCourse;
+    const ai = HOURS_ORDER.indexOf(a.startTime);
+    const bi = HOURS_ORDER.indexOf(b.startTime);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    return a.timeLabel.localeCompare(b.timeLabel);
+  });
+  return result;
+}
+
 /** Obtiene o crea un slot (cohort + instructor + día + hora). Si ya existe, devuelve ese id. */
 export async function getOrCreateCourseSchedule(params: {
   cohortId: string;
@@ -375,17 +559,18 @@ export async function deleteCourseSchedule(id: string) {
   if (error) throw new Error(error.message);
 }
 
-/** Normaliza hora a "HH:mm" para que las claves coincidan con el frontend. Acepta "08:00", "08:00:00", etc. */
+/** Normaliza hora a "HH:mm". Acepta "08:00", "08:00:00", "2024-01-01T08:00:00", etc. */
 function normalizeTimeToHHmm(startTime: unknown): string {
   if (startTime == null) return '08:00';
   const str = typeof startTime === 'string' ? startTime.trim() : String(startTime);
-  const match = str.match(/^(\d{1,2}):(\d{2})/);
+  const match = str.match(/(\d{1,2}):(\d{2})/);
   if (match) {
     const h = match[1].padStart(2, '0');
     const m = match[2];
-    return `${h}:${m}`;
+    const hour = Math.min(23, Math.max(0, parseInt(h, 10)));
+    return `${String(hour).padStart(2, '0')}:${m}`;
   }
-  return str.slice(0, 5).length === 5 ? str.slice(0, 5) : '08:00';
+  return '08:00';
 }
 
 /** Devuelve si un estudiante está en semana 1 o en última semana (terminando). */
@@ -430,23 +615,28 @@ function parseLocalDate(isoDate: string): Date {
   return new Date(isoDate);
 }
 
-/** Disponibilidad del instructor en un rango de fechas: solo aparece el alumno en las fechas de su periodo de prácticas. */
+/** Disponibilidad del instructor en un rango de fechas. Si cohortId se pasa, solo se consideran slots de ese cohort (misma fuente de verdad por curso). */
 export async function getInstructorAvailabilityForWeek(
   instructorId: string,
   weekStartISO: string,
-  weekEndISO: string
+  weekEndISO: string,
+  cohortId?: string
 ): Promise<{
   occupied: { date: string; start_time: string; student_names: string[]; status: 'occupied_week1' | 'occupied_ending' }[];
-  free: { date: string; start_time: string }[];
+  free: { date: string; start_time: string; schedule_id?: string }[];
 }> {
   const weekStart = parseLocalDate(weekStartISO);
   const weekEnd = parseLocalDate(weekEndISO);
   weekEnd.setHours(23, 59, 59, 999);
 
-  const { data: occupiedRows, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from('course_schedules')
     .select('id, day_of_week, start_time, schedule_group_id')
     .eq('instructor_id', instructorId);
+  if (cohortId) {
+    query = query.eq('cohort_id', cohortId);
+  }
+  const { data: occupiedRows, error } = await query;
 
   if (error) throw new Error(error.message);
 
@@ -560,16 +750,150 @@ export async function getInstructorAvailabilityForWeek(
     });
   }
 
-  const free: { date: string; start_time: string }[] = [];
+  const free: { date: string; start_time: string; schedule_id?: string }[] = [];
   for (let d = new Date(weekStart.getTime()); d <= weekEnd; d.setDate(d.getDate() + 1)) {
-    const dateISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    for (const start_time of HOURS_6_TO_23) {
+    const dateISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`.slice(0, 10);
+    const dayOfWeek = getDayOfWeek(d);
+    for (const r of rows) {
+      if (r.day_of_week !== dayOfWeek) continue;
+      const start_time = normalizeTimeToHHmm(r.start_time);
       const key = `${dateISO}-${start_time}`;
-      if (!bySlotKey.has(key) || bySlotKey.get(key)!.names.size === 0) free.push({ date: dateISO, start_time });
+      if (!bySlotKey.has(key) || bySlotKey.get(key)!.names.size === 0) {
+        free.push({ date: dateISO, start_time, schedule_id: r.id });
+      }
     }
   }
 
   return { occupied, free };
+}
+
+/** Vista general semanal: todas las horas 06–23 con X/Y cupos. Disponibles incluyen fechas exactas. Misma fuente que Disponibilidad por instructor. */
+export interface ScheduleOverviewHour {
+  hour: string;
+  totalInstructors: number;
+  freeCount: number;
+  available: { instructorId: string; instructorName: string; freeDates: string[] }[];
+  occupied: { instructorId: string; instructorName: string; studentNames: string[]; occupiedDates: string[] }[];
+}
+
+/** Clave (date + hour) para cruzar disponibilidad. */
+function slotKey(date: string, time: string): string {
+  const d = typeof date === 'string' ? date.slice(0, 10) : '';
+  const t = normalizeTimeToHHmm(time);
+  return `${d}-${t}`;
+}
+
+export async function getScheduleOverviewForWeek(
+  weekStartISO: string,
+  weekEndISO: string,
+  cohortId?: string,
+  instructorId?: string
+): Promise<ScheduleOverviewHour[]> {
+  const weekStart = parseLocalDate(weekStartISO);
+  const weekEnd = parseLocalDate(weekEndISO);
+  weekEnd.setHours(23, 59, 59, 999);
+  const weekDates: string[] = [];
+  for (let d = new Date(weekStart.getTime()); d <= weekEnd; d.setDate(d.getDate() + 1)) {
+    weekDates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+
+  let query = supabaseAdmin
+    .from('course_schedules')
+    .select('instructor_id, instructors(id, full_name)')
+    .not('instructor_id', 'is', null);
+  if (cohortId) query = query.eq('cohort_id', cohortId);
+  if (instructorId) query = query.eq('instructor_id', instructorId);
+  const { data: rows, error } = await query;
+  if (error) throw new Error(error.message);
+
+  type InstInfo = { instructorId: string; instructorName: string };
+  const allInstructorIds = new Set<string>();
+  const instIdToInfo = new Map<string, InstInfo>();
+  for (const r of rows || []) {
+    const instId = String((r as { instructor_id: unknown }).instructor_id ?? '');
+    if (!instId) continue;
+    allInstructorIds.add(instId);
+    if (!instIdToInfo.has(instId)) {
+      const instr = (r as { instructors?: { full_name?: string } | { full_name?: string }[] }).instructors;
+      const single = Array.isArray(instr) ? instr[0] : instr;
+      const name = (single as { full_name?: string } | null)?.full_name ?? '—';
+      instIdToInfo.set(instId, { instructorId: instId, instructorName: name });
+    }
+  }
+
+  const freeByInst = new Map<string, Set<string>>();
+  const occupiedByInst = new Map<string, Map<string, string[]>>();
+  for (const instId of allInstructorIds) {
+    const { free, occupied } = await getInstructorAvailabilityForWeek(instId, weekStartISO, weekEndISO, cohortId ?? undefined);
+    const fSet = new Set<string>();
+    for (const x of free) fSet.add(slotKey(x.date, x.start_time));
+    freeByInst.set(instId, fSet);
+    const oMap = new Map<string, string[]>();
+    for (const x of occupied) oMap.set(slotKey(x.date, x.start_time), x.student_names ?? []);
+    occupiedByInst.set(instId, oMap);
+  }
+
+  /** Qué horas tiene cada instructor: se derivan de free U occupied (misma fuente que Disponibilidad por instructor). */
+  const hoursByInst = new Map<string, Set<string>>();
+  for (const instId of allInstructorIds) {
+    const hours = new Set<string>();
+    const addHour = (key: string) => {
+      const parts = key.split('-');
+      if (parts.length >= 4) {
+        const h = parts.slice(3).join('-');
+        if (HOURS_6_TO_23.includes(h)) hours.add(h);
+      }
+    };
+    freeByInst.get(instId)?.forEach(addHour);
+    occupiedByInst.get(instId)?.forEach((_, key) => addHour(key));
+    hoursByInst.set(instId, hours);
+  }
+
+  const byHour = new Map<string, InstInfo[]>();
+  for (const h of HOURS_6_TO_23) {
+    byHour.set(h, []);
+    for (const instId of allInstructorIds) {
+      if (hoursByInst.get(instId)?.has(h)) {
+        const info = instIdToInfo.get(instId);
+        if (info) byHour.get(h)!.push(info);
+      }
+    }
+  }
+
+  const result: ScheduleOverviewHour[] = [];
+  for (const hour of HOURS_6_TO_23) {
+    const instructors = byHour.get(hour)!;
+    const available: { instructorId: string; instructorName: string; freeDates: string[] }[] = [];
+    const occupiedList: { instructorId: string; instructorName: string; studentNames: string[]; occupiedDates: string[] }[] = [];
+    for (const inst of instructors) {
+      const freeDates: string[] = [];
+      const allStudentNames: string[] = [];
+      const occupiedDates: string[] = [];
+      for (const date of weekDates) {
+        const key = slotKey(date, hour);
+        if (freeByInst.get(inst.instructorId)?.has(key)) freeDates.push(date);
+        const names = occupiedByInst.get(inst.instructorId)?.get(key);
+        if (names?.length) {
+          occupiedDates.push(date);
+          allStudentNames.push(...names);
+        }
+      }
+      const uniqueNames = [...new Set(allStudentNames)];
+      if (freeDates.length > 0) {
+        available.push({ instructorId: inst.instructorId, instructorName: inst.instructorName, freeDates });
+      } else {
+        occupiedList.push({ instructorId: inst.instructorId, instructorName: inst.instructorName, studentNames: uniqueNames, occupiedDates });
+      }
+    }
+    result.push({
+      hour,
+      totalInstructors: instructors.length,
+      freeCount: available.length,
+      available,
+      occupied: occupiedList,
+    });
+  }
+  return result;
 }
 
 export async function getScheduleWithStudents(scheduleId: string) {
