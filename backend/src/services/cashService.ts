@@ -1181,7 +1181,7 @@ export async function buildCashReportPdf(
   doc.fontSize(10).fillColor(primary).text(`Tipo: ${reportType}  ·  Rango: ${data.startDate} a ${data.endDate}`, { align: 'center' });
   doc.text(`Generado: ${generatedAt}  ·  Por: ${generatedBy}`, { align: 'center' });
   doc.moveDown(0.5);
-  doc.strokeColor(accent).lineWidth(1.5).moveTo(margin + contentW * 0.15, doc.y).lineTo(pageW - margin - contentW * 0.15, doc.y).stroke();
+  (doc as unknown as { strokeColor: (c: string) => typeof doc }).strokeColor(accent).lineWidth(1.5).moveTo(margin + contentW * 0.15, doc.y).lineTo(pageW - margin - contentW * 0.15, doc.y).stroke();
   doc.moveDown(0.8);
 
   sectionTitle('Resumen ejecutivo');
@@ -1200,7 +1200,7 @@ export async function buildCashReportPdf(
     { label: 'Cant. ingresos / egresos', value: `${data.countIncome} / ${data.countExpense}`, color: secondary },
   ];
   const summaryBoxH = summaryLines.length * lineH + 24;
-  doc.roundedRect(summaryBoxX, summaryY0, summaryBoxW, summaryBoxH, 4).fillAndStroke(boxBg, primary);
+  (doc as unknown as { roundedRect: (x: number, y: number, w: number, h: number, r: number) => typeof doc }).roundedRect(summaryBoxX, summaryY0, summaryBoxW, summaryBoxH, 4).fillAndStroke(boxBg, primary);
   doc.font('Helvetica').fontSize(9);
   const valueBlockW = 115;
   const labelBlockW = summaryBoxW - 28 - valueBlockW;
@@ -1242,11 +1242,11 @@ export async function buildCashReportPdf(
     let cellHeight = rowH;
     for (let i = 0; i < row.length; i++) {
       const w = colW[i] - 8;
-      const h = doc.heightOfString(row[i], { width: w });
+      const h = (doc as unknown as { heightOfString: (text: string, opts?: { width?: number }) => number }).heightOfString(row[i], { width: w });
       cellHeight = Math.max(cellHeight, Math.ceil(h) + 10);
     }
     if (y + cellHeight > tableBreakY) {
-      doc.addPage(PDF_PAGE_OPTIONS);
+      (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
       doc.y = margin + 18;
       y = doc.y;
       x = tableX;
@@ -1278,7 +1278,7 @@ export async function buildCashReportPdf(
 
   doc.y = y + 18;
   if (doc.y > pageH - minSpaceForResumen) {
-    doc.addPage(PDF_PAGE_OPTIONS);
+    (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
     doc.y = margin + 18;
   }
 
@@ -1317,7 +1317,7 @@ export async function buildCashReportPdf(
   const finalValueX = finalBoxX + finalBoxW - finalBoxPad - finalValueW;
   const finalY0 = doc.y;
   const finalH = 118;
-  doc.roundedRect(finalBoxX, finalY0, finalBoxW, finalH, 4).fillAndStroke(boxBg, accent);
+  (doc as unknown as { roundedRect: (x: number, y: number, w: number, h: number, r: number) => typeof doc }).roundedRect(finalBoxX, finalY0, finalBoxW, finalH, 4).fillAndStroke(boxBg, accent);
   doc.font('Helvetica-Bold').fontSize(10).fillColor(primary).text('Resumen final del período', finalLabelX, finalY0 + 12, { width: finalBoxW - finalBoxPad * 2 });
   doc.font('Helvetica').fontSize(9);
   doc.fillColor(green).text(`Ingreso total: $ ${data.totalIncome.toFixed(2)}`, finalLabelX, finalY0 + 30);

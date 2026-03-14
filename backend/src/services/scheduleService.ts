@@ -354,7 +354,7 @@ export async function listScheduleSlotsGroupedByTime(
   const useWeekAvailability = weekStartISO && weekEndISO && weekStart && weekEnd;
 
   if (useWeekAvailability) {
-    return listScheduleSlotsFromWeekAvailability(cohortId, instructorId, weekStartISO!, weekEndISO!, weekStart!, weekEnd!);
+    return listScheduleSlotsFromWeekAvailability(weekStartISO!, weekEndISO!, weekStart!, weekEnd!, cohortId, instructorId);
   }
 
   const blocks = await listScheduleBlocksForEnrollment(cohortId, instructorId);
@@ -404,12 +404,12 @@ export async function listScheduleSlotsGroupedByTime(
 
 /** Construye horarios por curso desde la disponibilidad real de la semana (misma lógica que Disponibilidad por instructor). */
 async function listScheduleSlotsFromWeekAvailability(
-  cohortId?: string,
-  instructorId?: string,
   weekStartISO: string,
   weekEndISO: string,
   weekStart: Date,
-  weekEnd: Date
+  weekEnd: Date,
+  cohortId?: string,
+  instructorId?: string
 ): Promise<ScheduleSlotGroupedByTime[]> {
   const rows = await listCourseSchedules(cohortId, instructorId);
   type PairKey = string;
