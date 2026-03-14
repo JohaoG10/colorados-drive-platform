@@ -1181,7 +1181,7 @@ export async function buildCashReportPdf(
   doc.fontSize(10).fillColor(primary).text(`Tipo: ${reportType}  ·  Rango: ${data.startDate} a ${data.endDate}`, { align: 'center' });
   doc.text(`Generado: ${generatedAt}  ·  Por: ${generatedBy}`, { align: 'center' });
   doc.moveDown(0.5);
-  (doc as unknown as { strokeColor: (c: string) => typeof doc }).strokeColor(accent).lineWidth(1.5).moveTo(margin + contentW * 0.15, doc.y).lineTo(pageW - margin - contentW * 0.15, doc.y).stroke();
+  (doc as any).strokeColor(accent).lineWidth(1.5).moveTo(margin + contentW * 0.15, doc.y).lineTo(pageW - margin - contentW * 0.15, doc.y).stroke();
   doc.moveDown(0.8);
 
   sectionTitle('Resumen ejecutivo');
@@ -1200,7 +1200,7 @@ export async function buildCashReportPdf(
     { label: 'Cant. ingresos / egresos', value: `${data.countIncome} / ${data.countExpense}`, color: secondary },
   ];
   const summaryBoxH = summaryLines.length * lineH + 24;
-  (doc as unknown as { roundedRect: (x: number, y: number, w: number, h: number, r: number) => typeof doc }).roundedRect(summaryBoxX, summaryY0, summaryBoxW, summaryBoxH, 4).fillAndStroke(boxBg, primary);
+  (doc as any).roundedRect(summaryBoxX, summaryY0, summaryBoxW, summaryBoxH, 4).fillAndStroke(boxBg, primary);
   doc.font('Helvetica').fontSize(9);
   const valueBlockW = 115;
   const labelBlockW = summaryBoxW - 28 - valueBlockW;
@@ -1317,7 +1317,7 @@ export async function buildCashReportPdf(
   const finalValueX = finalBoxX + finalBoxW - finalBoxPad - finalValueW;
   const finalY0 = doc.y;
   const finalH = 118;
-  (doc as unknown as { roundedRect: (x: number, y: number, w: number, h: number, r: number) => typeof doc }).roundedRect(finalBoxX, finalY0, finalBoxW, finalH, 4).fillAndStroke(boxBg, accent);
+  (doc as any).roundedRect(finalBoxX, finalY0, finalBoxW, finalH, 4).fillAndStroke(boxBg, accent);
   doc.font('Helvetica-Bold').fontSize(10).fillColor(primary).text('Resumen final del período', finalLabelX, finalY0 + 12, { width: finalBoxW - finalBoxPad * 2 });
   doc.font('Helvetica').fontSize(9);
   doc.fillColor(green).text(`Ingreso total: $ ${data.totalIncome.toFixed(2)}`, finalLabelX, finalY0 + 30);
