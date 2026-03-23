@@ -1327,7 +1327,12 @@ router.get('/course-schedules/:id/students', [param('id').isUUID()], async (req:
 // --- Caja ---
 router.get('/cash/summary', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const summary = await cashService.getTodaySummary();
+    const book = cashService.parseCashBookQuery(req.query.cashBook) ?? 'escuela';
+    if (book === 'all') {
+      res.status(400).json({ error: 'cashBook debe ser escuela o dra' });
+      return;
+    }
+    const summary = await cashService.getTodaySummary(book);
     res.json(summary);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
@@ -1336,7 +1341,8 @@ router.get('/cash/summary', async (req: AuthenticatedRequest, res: Response) => 
 
 router.get('/cash/dashboard', async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const dashboard = await cashService.getFinancialDashboard();
+    const view = cashService.parseCashBookQuery(req.query.view) ?? 'escuela';
+    const dashboard = await cashService.getFinancialDashboard(view);
     res.json(dashboard);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
@@ -1345,8 +1351,13 @@ router.get('/cash/dashboard', async (req: AuthenticatedRequest, res: Response) =
 
 router.get('/cash/open-session', async (req: AuthenticatedRequest, res: Response) => {
   const date = (req.query.date as string) || new Date().toISOString().slice(0, 10);
+  const book = cashService.parseCashBookQuery(req.query.cashBook) ?? 'escuela';
   try {
-    const session = await cashService.getOpenSessionForDate(date);
+    if (book === 'all') {
+      res.status(400).json({ error: 'cashBook debe ser escuela o dra' });
+      return;
+    }
+    const session = await cashService.getOpenSessionForDate(date, book);
     res.json(session);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
@@ -1358,6 +1369,7 @@ router.post(
   [
     body('date').matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('date must be YYYY-MM-DD'),
     body('openingAmount').isFloat({ min: 0 }).withMessage('openingAmount must be >= 0'),
+    body('cashBook').optional().isIn(['escuela', 'dra']),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);
@@ -1374,6 +1386,7 @@ router.post(
         date: req.body.date,
         openingAmount: Number(req.body.openingAmount),
         openedBy: req.user.id,
+        cashBook: req.body.cashBook as 'escuela' | 'dra' | undefined,
       });
       res.status(201).json(session);
     } catch (e) {
@@ -1411,10 +1424,11 @@ router.get('/cash/sessions', async (req: AuthenticatedRequest, res: Response) =>
   const fromDate = req.query.fromDate as string | undefined;
   const toDate = req.query.toDate as string | undefined;
   const status = req.query.status as 'open' | 'closed' | undefined;
+  const cashBook = cashService.parseCashBookQuery(req.query.cashBook) ?? 'all';
   const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
   const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
   try {
-    const result = await cashService.listSessions({ fromDate, toDate, status, limit, offset });
+    const result = await cashService.listSessions({ fromDate, toDate, status, cashBook, limit, offset });
     res.json(result);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
@@ -1442,8 +1456,9 @@ router.get('/cash/sessions/:id/close-preview', [param('id').isUUID()], async (re
 router.get('/cash/transactions', async (req: AuthenticatedRequest, res: Response) => {
   const fromDate = req.query.fromDate as string | undefined;
   const toDate = req.query.toDate as string | undefined;
-  const type = req.query.type as 'income' | 'expense' | undefined;
+  const type = req.query.type as 'income' | 'expense' | 'internal_transfer' | undefined;
   const sessionId = req.query.sessionId as string | undefined;
+  const cashBook = cashService.parseCashBookQuery(req.query.cashBook) ?? 'all';
   const search = req.query.search as string | undefined;
   const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
   const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
@@ -1453,6 +1468,7 @@ router.get('/cash/transactions', async (req: AuthenticatedRequest, res: Response
       toDate,
       type,
       sessionId,
+      cashBook,
       search,
       limit,
       offset,
@@ -1485,6 +1501,8 @@ router.post(
     body('incomeType').isIn(cashService.INCOME_TYPES),
     body('amount').isFloat({ min: 0.01 }),
     body('paymentMethod').isIn(['efectivo', 'transferencia', 'tarjeta']),
+    body('fundsDestination').optional().isIn([...cashService.FUNDS_DESTINATIONS]),
+    body('transferBank').optional().isIn([...cashService.TRANSFER_BANK_IDS]),
     body('notes').optional().trim().isString(),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
@@ -1500,6 +1518,8 @@ router.post(
         incomeType: req.body.incomeType,
         amount: Number(req.body.amount),
         paymentMethod: req.body.paymentMethod,
+        fundsDestination: req.body.fundsDestination,
+        transferBank: cashService.parseTransferBankId(req.body.transferBank),
         notes: req.body.notes,
         createdBy: req.user?.id ?? null,
       });
@@ -1518,6 +1538,8 @@ router.post(
     body('category').isIn(cashService.EXPENSE_CATEGORIES),
     body('amount').isFloat({ min: 0.01 }),
     body('paymentMethod').isIn(['efectivo', 'transferencia', 'tarjeta']),
+    body('fundsDestination').optional().isIn([...cashService.FUNDS_DESTINATIONS]),
+    body('transferBank').optional().isIn([...cashService.TRANSFER_BANK_IDS]),
     body('notes').optional().trim().isString(),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
@@ -1533,6 +1555,45 @@ router.post(
         category: req.body.category,
         amount: Number(req.body.amount),
         paymentMethod: req.body.paymentMethod,
+        fundsDestination: req.body.fundsDestination,
+        transferBank: cashService.parseTransferBankId(req.body.transferBank),
+        notes: req.body.notes,
+        createdBy: req.user?.id ?? null,
+      });
+      res.status(201).json(tx);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.post(
+  '/cash/internal-transfer',
+  [
+    body('date').matches(/^\d{4}-\d{2}-\d{2}$/).withMessage('date YYYY-MM-DD'),
+    body('fromBook').isIn(['escuela', 'dra']),
+    body('toBook').isIn(['escuela', 'dra']),
+    body('channel').isIn([...cashService.INTERNAL_TRANSFER_CHANNELS]),
+    body('amount').isFloat({ min: 0.01 }),
+    body('concept').trim().notEmpty(),
+    body('transferBank').optional().isIn([...cashService.TRANSFER_BANK_IDS]),
+    body('notes').optional().trim().isString(),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    try {
+      const tx = await cashService.addInternalTransfer({
+        date: req.body.date,
+        fromBook: req.body.fromBook,
+        toBook: req.body.toBook,
+        channel: req.body.channel,
+        amount: Number(req.body.amount),
+        concept: req.body.concept,
+        transferBank: cashService.parseTransferBankId(req.body.transferBank),
         notes: req.body.notes,
         createdBy: req.user?.id ?? null,
       });
@@ -1575,6 +1636,7 @@ router.patch(
     body('income_type').optional().isIn(cashService.INCOME_TYPES),
     body('amount').optional().isFloat({ min: 0.01 }),
     body('payment_method').optional().isIn(['efectivo', 'transferencia', 'tarjeta']),
+    body('funds_destination').optional().isIn([...cashService.FUNDS_DESTINATIONS]),
     body('notes').optional().trim().isString(),
     body('adminCode').optional().trim().isString(),
     body('reason').optional().trim().isString(),
@@ -1597,6 +1659,7 @@ router.patch(
       if (req.body.income_type !== undefined) payload.income_type = req.body.income_type;
       if (req.body.amount !== undefined) payload.amount = Number(req.body.amount);
       if (req.body.payment_method !== undefined) payload.payment_method = req.body.payment_method;
+      if (req.body.funds_destination !== undefined) payload.funds_destination = req.body.funds_destination;
       if (req.body.notes !== undefined) payload.notes = req.body.notes;
       const options =
         req.body.adminCode != null || req.body.reason != null
@@ -1644,12 +1707,23 @@ router.post(
 router.get('/cash/report', async (req: AuthenticatedRequest, res: Response) => {
   const from = req.query.from as string;
   const to = req.query.to as string;
+  const combined = req.query.combined === '1' || req.query.combined === 'true';
+  const book = cashService.parseCashBookQuery(req.query.cashBook) ?? 'escuela';
   if (!from || !to) {
     res.status(400).json({ error: 'Parámetros from y to (YYYY-MM-DD) son requeridos' });
     return;
   }
   try {
-    const report = await cashService.getReportByPeriod(from, to);
+    if (combined) {
+      const report = await cashService.getReportCombinedSummary(from, to);
+      res.json(report);
+      return;
+    }
+    if (book === 'all') {
+      res.status(400).json({ error: 'cashBook debe ser escuela o dra' });
+      return;
+    }
+    const report = await cashService.getReportByPeriod(from, to, book);
     res.json(report);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
@@ -1661,23 +1735,68 @@ router.get('/cash/report/export', async (req: AuthenticatedRequest, res: Respons
   const to = req.query.to as string;
   const format = ((req.query.format as string) || 'xlsx').toLowerCase();
   const reportType = (req.query.reportType as string) || 'Personalizado';
+  const combined = req.query.combined === '1' || req.query.combined === 'true';
+  const book = cashService.parseCashBookQuery(req.query.cashBook) ?? 'escuela';
   if (!from || !to) {
     res.status(400).json({ error: 'Parámetros from y to (YYYY-MM-DD) son requeridos' });
     return;
   }
   try {
-    const data = await cashService.getReportDataForExport(from, to);
-    if (data.transactions.length === 0) {
+    const generatedAt = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', dateStyle: 'short', timeStyle: 'medium' });
+    const generatedBy = (req as AuthenticatedRequest).user?.fullName ?? (req as AuthenticatedRequest).user?.email ?? 'Sistema';
+
+    if (combined) {
+      const data = await cashService.getReportDataForExportCombined(from, to);
+      const hasAny =
+        data.escuela.transactions.length +
+          data.dra.transactions.length +
+          data.escuela.internalTransfers.length +
+          data.dra.internalTransfers.length +
+          data.allInternalTransfers.length >
+        0;
+      if (!hasAny) {
+        res.status(400).json({ error: 'No hay datos para exportar en el rango seleccionado' });
+        return;
+      }
+      const slug = 'completo';
+      if (format === 'pdf') {
+        const buffer = await cashService.buildCashReportPdfCombined(data, reportType, generatedAt, generatedBy);
+        res.setHeader('Content-Type', 'application/pdf');
+        const pdfFilename =
+          from === to ? `reporte_caja_${slug}_${from}.pdf` : `reporte_caja_${slug}_${from}_a_${to}.pdf`;
+        res.setHeader('Content-Disposition', `attachment; filename="${pdfFilename}"`);
+        res.send(buffer);
+        return;
+      }
+      if (format === 'xlsx') {
+        const buffer = await cashService.buildCashReportExcelCombined(data, reportType, generatedAt, generatedBy);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        const filename =
+          from === to ? `reporte_caja_${slug}_${from}.xlsx` : `reporte_caja_${slug}_${from}_a_${to}.xlsx`;
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(buffer);
+        return;
+      }
+      res.status(400).json({ error: 'Formato no soportado. Use format=xlsx o format=pdf' });
+      return;
+    }
+
+    if (book === 'all') {
+      res.status(400).json({ error: 'cashBook debe ser escuela o dra' });
+      return;
+    }
+    const data = await cashService.getReportDataForExport(from, to, book);
+    if (data.transactions.length === 0 && data.internalTransfers.length === 0) {
       res.status(400).json({ error: 'No hay datos para exportar en el rango seleccionado' });
       return;
     }
-    const generatedAt = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil', dateStyle: 'short', timeStyle: 'medium' });
-    const generatedBy = (req as AuthenticatedRequest).user?.fullName ?? (req as AuthenticatedRequest).user?.email ?? 'Sistema';
+    const bookSlug = book === 'dra' ? 'dra' : 'escuela';
 
     if (format === 'pdf') {
       const buffer = await cashService.buildCashReportPdf(data, reportType, generatedAt, generatedBy);
       res.setHeader('Content-Type', 'application/pdf');
-      const pdfFilename = from === to ? `reporte_caja_${from}.pdf` : `reporte_caja_${from}_a_${to}.pdf`;
+      const pdfFilename =
+        from === to ? `reporte_caja_${bookSlug}_${from}.pdf` : `reporte_caja_${bookSlug}_${from}_a_${to}.pdf`;
       res.setHeader('Content-Disposition', `attachment; filename="${pdfFilename}"`);
       res.send(buffer);
       return;
@@ -1686,7 +1805,8 @@ router.get('/cash/report/export', async (req: AuthenticatedRequest, res: Respons
     if (format === 'xlsx') {
       const buffer = await cashService.buildCashReportExcelFull(data, reportType, generatedAt, generatedBy);
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      const filename = from === to ? `reporte_caja_${from}.xlsx` : `reporte_caja_${from}_a_${to}.xlsx`;
+      const filename =
+        from === to ? `reporte_caja_${bookSlug}_${from}.xlsx` : `reporte_caja_${bookSlug}_${from}_a_${to}.xlsx`;
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.send(buffer);
       return;
@@ -1703,6 +1823,14 @@ router.get('/cash/constants', async (_req: AuthenticatedRequest, res: Response) 
     incomeTypes: cashService.INCOME_TYPES,
     expenseCategories: cashService.EXPENSE_CATEGORIES,
     paymentMethods: ['efectivo', 'transferencia', 'tarjeta'] as const,
+    cashBooks: ['escuela', 'dra'] as const,
+    fundsDestinations: cashService.FUNDS_DESTINATIONS,
+    fundsDestinationLabels: cashService.FUNDS_DESTINATION_LABELS,
+    transferBanks: cashService.TRANSFER_BANK_IDS.map((id) => ({
+      id,
+      label: cashService.TRANSFER_BANK_LABELS[id],
+    })),
+    internalTransferChannels: cashService.INTERNAL_TRANSFER_CHANNELS,
   });
 });
 

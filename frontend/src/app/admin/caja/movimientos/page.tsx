@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense, useCallback } from 'react';
 import Link from 'next/link';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAuthHeaders, triggerSessionExpired } from '@/lib/api';
 
@@ -28,6 +29,51 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   tarjeta: 'Tarjeta',
 };
 
+type CashBook = 'escuela' | 'dra';
+
+type TransferBankId = 'pichincha' | 'guayaquil' | 'pacifico';
+
+const TRANSFER_BANK_OPTIONS: { id: TransferBankId; label: string }[] = [
+  { id: 'pichincha', label: 'Banco Pichincha' },
+  { id: 'guayaquil', label: 'Banco Guayaquil' },
+  { id: 'pacifico', label: 'Banco del Pacífico' },
+];
+
+/** Efectivo / tarjeta: destino en BD. Transferencias usan `transferBank` en el body. */
+function pickFundsDestination(
+  pm: 'efectivo' | 'transferencia' | 'tarjeta',
+  book: CashBook
+): string | null {
+  if (pm === 'tarjeta') return null;
+  if (pm === 'efectivo') return book === 'dra' ? 'efectivo_dra' : 'efectivo_escuela';
+  return null;
+}
+
+function fundsDestinationForPayment(
+  pm: 'efectivo' | 'transferencia' | 'tarjeta',
+  book: CashBook,
+  bank: TransferBankId
+): string | null {
+  if (pm === 'tarjeta') return null;
+  if (pm === 'efectivo') return book === 'dra' ? 'efectivo_dra' : 'efectivo_escuela';
+  if (book === 'dra') {
+    if (bank === 'pichincha') return 'trans_pichincha_dra';
+    if (bank === 'guayaquil') return 'trans_gye_dra';
+    return 'trans_pacifico_dra';
+  }
+  if (bank === 'pichincha') return 'trans_pichincha_escuela';
+  if (bank === 'guayaquil') return 'trans_gye_escuela';
+  return 'trans_pacifico_escuela';
+}
+
+function transferBankFromFundsDestination(fd: string | null | undefined): TransferBankId {
+  if (!fd) return 'pichincha';
+  if (fd.includes('pichincha')) return 'pichincha';
+  if (fd.includes('gye')) return 'guayaquil';
+  if (fd.includes('pacifico')) return 'pacifico';
+  return 'pichincha';
+}
+
 interface CashSummary {
   sessionId: string;
   date: string;
@@ -38,12 +84,16 @@ interface CashSummary {
 interface Transaction {
   id: string;
   cash_session_id: string;
-  type: 'income' | 'expense';
+  type: 'income' | 'expense' | 'internal_transfer';
   concept: string;
   category: string | null;
   income_type: string | null;
   payment_method: string;
   amount: number;
+  funds_destination?: string | null;
+  internal_from_book?: string | null;
+  internal_to_book?: string | null;
+  internal_channel?: string | null;
   notes: string | null;
   created_by_name: string | null;
   created_at: string;
@@ -62,10 +112,18 @@ function formatDate(s: string) {
   return new Date(s).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-const defaultFilters = { fromDate: '', toDate: '', type: '' as '' | 'income' | 'expense', search: '' };
+const defaultFilters = { fromDate: '', toDate: '', type: '' as '' | 'income' | 'expense' | 'internal_transfer', search: '' };
 
-export default function CajaMovimientosPage() {
+function CajaMovimientosPageInner() {
   const { token } = useAuth();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const cashBook: CashBook = searchParams.get('cashBook') === 'dra' ? 'dra' : 'escuela';
+  const setCashBook = (b: CashBook) => {
+    const p = new URLSearchParams(searchParams.toString());
+    p.set('cashBook', b);
+    router.replace(`/admin/caja/movimientos?${p.toString()}`);
+  };
   const [summary, setSummary] = useState<CashSummary | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [total, setTotal] = useState(0);
@@ -78,14 +136,33 @@ export default function CajaMovimientosPage() {
     category: 'otros',
     amount: '',
     paymentMethod: 'efectivo' as 'efectivo' | 'transferencia' | 'tarjeta',
+    transferBank: 'pichincha' as TransferBankId,
     notes: '',
   });
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
+  const [internalForm, setInternalForm] = useState({
+    fromBook: 'escuela' as CashBook,
+    toBook: 'dra' as CashBook,
+    channel: 'transferencia' as 'efectivo' | 'transferencia',
+    transferBank: 'pichincha' as TransferBankId,
+    amount: '',
+    concept: '',
+    notes: '',
+  });
+  const [showInternalForm, setShowInternalForm] = useState(false);
   const today = new Date().toISOString().slice(0, 10);
 
+  const paymentMethodOptions =
+    cashBook === 'dra'
+      ? Object.entries(PAYMENT_METHOD_LABELS).filter(([k]) => k !== 'tarjeta')
+      : Object.entries(PAYMENT_METHOD_LABELS);
+
   const canEditWithoutAuth = (t: Transaction) =>
-    !t.anulado_at && t.session_status === 'open' && t.session_date === today;
+    t.type !== 'internal_transfer' &&
+    !t.anulado_at &&
+    t.session_status === 'open' &&
+    t.session_date === today;
 
   const [editTransaction, setEditTransaction] = useState<Transaction | null>(null);
   const [editForm, setEditForm] = useState({
@@ -94,6 +171,7 @@ export default function CajaMovimientosPage() {
     category: 'otros' as string,
     amount: '',
     paymentMethod: 'efectivo' as 'efectivo' | 'transferencia' | 'tarjeta',
+    transferBank: 'pichincha' as TransferBankId,
     notes: '',
   });
   const [authModal, setAuthModal] = useState<{
@@ -105,41 +183,39 @@ export default function CajaMovimientosPage() {
   const [actionSuccess, setActionSuccess] = useState('');
   const [actionError, setActionError] = useState('');
 
-  const loadSummary = () => {
+  const reloadCashPage = useCallback(() => {
     if (!token) return;
-    fetch(`${API_URL}/api/admin/cash/summary`, { headers: getAuthHeaders(token) })
-      .then((r) => (r.status === 401 ? triggerSessionExpired() : r.json()))
-      .then((d) => setSummary(d || null))
-      .catch(() => setSummary(null));
-  };
-
-  const loadTransactions = () => {
-    if (!token) return;
+    setLoading(true);
     const params = new URLSearchParams();
     if (filters.fromDate) params.set('fromDate', filters.fromDate);
     if (filters.toDate) params.set('toDate', filters.toDate);
     if (filters.type) params.set('type', filters.type);
     if (filters.search) params.set('search', filters.search);
-    fetch(`${API_URL}/api/admin/cash/transactions?${params}`, { headers: getAuthHeaders(token) })
-      .then((r) => (r.status === 401 ? triggerSessionExpired() : r.json()))
-      .then((d) => {
-        setTransactions(d?.transactions ?? []);
-        setTotal(d?.total ?? 0);
+    params.set('cashBook', cashBook);
+
+    Promise.all([
+      fetch(`${API_URL}/api/admin/cash/summary?cashBook=${cashBook}`, { headers: getAuthHeaders(token) }).then((r) =>
+        r.status === 401 ? triggerSessionExpired() : r.json()
+      ),
+      fetch(`${API_URL}/api/admin/cash/transactions?${params}`, { headers: getAuthHeaders(token) }).then((r) =>
+        r.status === 401 ? triggerSessionExpired() : r.json()
+      ),
+    ])
+      .then(([sum, tx]) => {
+        setSummary(sum && !sum.error ? sum : null);
+        setTransactions(tx?.transactions ?? []);
+        setTotal(tx?.total ?? 0);
       })
-      .catch(() => setTransactions([]));
-  };
+      .catch(() => {
+        setSummary(null);
+        setTransactions([]);
+      })
+      .finally(() => setLoading(false));
+  }, [token, cashBook, filters.fromDate, filters.toDate, filters.type, filters.search]);
 
   useEffect(() => {
-    if (!token) return;
-    setLoading(true);
-    loadSummary();
-    loadTransactions();
-    setLoading(false);
-  }, [token]);
-
-  useEffect(() => {
-    if (token) loadTransactions();
-  }, [filters.fromDate, filters.toDate, filters.type, filters.search]);
+    reloadCashPage();
+  }, [reloadCashPage]);
 
   const handleSubmit = async (e: React.FormEvent, type: 'income' | 'expense') => {
     e.preventDefault();
@@ -152,13 +228,37 @@ export default function CajaMovimientosPage() {
       setMessage('Monto debe ser mayor a 0.');
       return;
     }
+    if (cashBook === 'dra' && form.paymentMethod === 'tarjeta') {
+      setMessage('En caja DRA no se registra tarjeta; use efectivo o transferencia.');
+      return;
+    }
+    const fundsDestination =
+      form.paymentMethod === 'transferencia'
+        ? undefined
+        : pickFundsDestination(form.paymentMethod, cashBook);
     setSubmitting(true);
     setMessage('');
     const url = type === 'income' ? `${API_URL}/api/admin/cash/income` : `${API_URL}/api/admin/cash/expense`;
-    const body =
+    const body: Record<string, unknown> =
       type === 'income'
-        ? { sessionId: summary.sessionId, concept: form.concept.trim(), incomeType: form.incomeType, amount, paymentMethod: form.paymentMethod, notes: form.notes.trim() || undefined }
-        : { sessionId: summary.sessionId, concept: form.concept.trim(), category: form.category, amount, paymentMethod: form.paymentMethod, notes: form.notes.trim() || undefined };
+        ? {
+            sessionId: summary.sessionId,
+            concept: form.concept.trim(),
+            incomeType: form.incomeType,
+            amount,
+            paymentMethod: form.paymentMethod,
+            notes: form.notes.trim() || undefined,
+          }
+        : {
+            sessionId: summary.sessionId,
+            concept: form.concept.trim(),
+            category: form.category,
+            amount,
+            paymentMethod: form.paymentMethod,
+            notes: form.notes.trim() || undefined,
+          };
+    if (form.paymentMethod === 'transferencia') body.transferBank = form.transferBank;
+    else body.fundsDestination = fundsDestination;
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -173,9 +273,16 @@ export default function CajaMovimientosPage() {
         return;
       }
       setShowForm(null);
-      setForm({ concept: '', incomeType: 'pago_curso', category: 'otros', amount: '', paymentMethod: 'efectivo', notes: '' });
-      loadSummary();
-      loadTransactions();
+      setForm({
+        concept: '',
+        incomeType: 'pago_curso',
+        category: 'otros',
+        amount: '',
+        paymentMethod: 'efectivo',
+        transferBank: 'pichincha',
+        notes: '',
+      });
+      reloadCashPage();
     } catch {
       setMessage('Error de conexión');
     }
@@ -200,6 +307,7 @@ export default function CajaMovimientosPage() {
       category: t.category || 'otros',
       amount: String(t.amount),
       paymentMethod: t.payment_method as 'efectivo' | 'transferencia' | 'tarjeta',
+      transferBank: transferBankFromFundsDestination(t.funds_destination),
       notes: t.notes || '',
     });
     setActionError('');
@@ -216,6 +324,7 @@ export default function CajaMovimientosPage() {
         category: t.category || 'otros',
         amount: String(t.amount),
         paymentMethod: t.payment_method as 'efectivo' | 'transferencia' | 'tarjeta',
+        transferBank: transferBankFromFundsDestination(t.funds_destination),
         notes: t.notes || '',
       });
     }
@@ -233,10 +342,17 @@ export default function CajaMovimientosPage() {
     setActionError('');
     setActionSuccess('');
     try {
+      const dest =
+        editForm.paymentMethod === 'transferencia'
+          ? fundsDestinationForPayment('transferencia', cashBook, editForm.transferBank)
+          : editForm.paymentMethod === 'efectivo'
+            ? pickFundsDestination('efectivo', cashBook)
+            : null;
       const body: Record<string, unknown> = {
         concept: editForm.concept.trim(),
         amount,
         payment_method: editForm.paymentMethod,
+        funds_destination: dest,
         notes: editForm.notes.trim() || null,
       };
       if (editTransaction.type === 'income') body.income_type = editForm.incomeType;
@@ -260,8 +376,7 @@ export default function CajaMovimientosPage() {
       setActionSuccess('Movimiento actualizado correctamente.');
       setEditTransaction(null);
       setAuthModal(null);
-      loadSummary();
-      loadTransactions();
+      reloadCashPage();
       setTimeout(() => setActionSuccess(''), 4000);
     } catch {
       setActionError('Error de conexión');
@@ -298,8 +413,7 @@ export default function CajaMovimientosPage() {
       }
       setActionSuccess('Movimiento anulado correctamente.');
       setAuthModal(null);
-      loadSummary();
-      loadTransactions();
+      reloadCashPage();
       setTimeout(() => setActionSuccess(''), 4000);
     } catch {
       setActionError('Error de conexión');
@@ -308,8 +422,65 @@ export default function CajaMovimientosPage() {
   };
 
   const startEdit = (t: Transaction) => {
+    if (t.type === 'internal_transfer') {
+      setActionError('Las transferencias internas no se editan aquí; anule y registre de nuevo si aplica.');
+      return;
+    }
     if (canEditWithoutAuth(t)) openEditModal(t);
     else openAuthModal(t, 'edit');
+  };
+
+  const handleInternalSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token) return;
+    if (internalForm.fromBook === internalForm.toBook) {
+      setMessage('Origen y destino deben ser distintos.');
+      return;
+    }
+    const amount = parseFloat(internalForm.amount.replace(',', '.'));
+    if (isNaN(amount) || amount <= 0) {
+      setMessage('Monto inválido.');
+      return;
+    }
+    setSubmitting(true);
+    setMessage('');
+    try {
+      const res = await fetch(`${API_URL}/api/admin/cash/internal-transfer`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders(token), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: today,
+          fromBook: internalForm.fromBook,
+          toBook: internalForm.toBook,
+          channel: internalForm.channel,
+          ...(internalForm.channel === 'transferencia' ? { transferBank: internalForm.transferBank } : {}),
+          amount,
+          concept: internalForm.concept.trim(),
+          notes: internalForm.notes.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.status === 401) triggerSessionExpired();
+      if (!res.ok) {
+        setMessage(data?.error || 'Error al registrar transferencia');
+        setSubmitting(false);
+        return;
+      }
+      setShowInternalForm(false);
+      setInternalForm({
+        fromBook: 'escuela',
+        toBook: 'dra',
+        channel: 'transferencia',
+        transferBank: 'pichincha',
+        amount: '',
+        concept: '',
+        notes: '',
+      });
+      reloadCashPage();
+    } catch {
+      setMessage('Error de conexión');
+    }
+    setSubmitting(false);
   };
 
   const startAnulate = (t: Transaction) => {
@@ -333,8 +504,22 @@ export default function CajaMovimientosPage() {
                 Movimientos
               </h1>
               <p className="mt-1 max-w-xl text-sm text-slate-500 sm:text-base">
-                Historial de ingresos y egresos. Filtra por fecha, tipo o concepto y registra nuevos movimientos cuando la caja esté abierta.
+                Historial por libro (Escuela o DRA). Las transferencias internas se detallan sin contar como egreso operativo.
               </p>
+              <div className="mt-4 inline-flex rounded-xl border border-slate-200 bg-slate-100/80 p-1">
+                {(['escuela', 'dra'] as const).map((b) => (
+                  <button
+                    key={b}
+                    type="button"
+                    onClick={() => setCashBook(b)}
+                    className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                      cashBook === b ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {b === 'escuela' ? 'Caja Escuela' : 'Caja DRA'}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <Link
@@ -364,6 +549,16 @@ export default function CajaMovimientosPage() {
                     <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" /></svg>
                     Egreso
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowInternalForm(true);
+                      setMessage('');
+                    }}
+                    className="inline-flex items-center gap-2 rounded-xl border border-sky-300 bg-sky-50 px-4 py-2.5 text-sm font-semibold text-sky-800 shadow-sm transition hover:bg-sky-100"
+                  >
+                    Transferir entre cuentas
+                  </button>
                 </>
               )}
               <Link
@@ -384,7 +579,7 @@ export default function CajaMovimientosPage() {
           <div className="mb-6 rounded-2xl border border-emerald-200/80 bg-emerald-50/60 px-5 py-4 shadow-sm">
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-              <span className="text-sm font-medium text-emerald-800">Caja abierta</span>
+              <span className="text-sm font-medium text-emerald-800">Caja abierta ({cashBook === 'dra' ? 'DRA' : 'Escuela'})</span>
               <span className="text-slate-400">·</span>
               <span className="text-sm text-emerald-700">Balance actual</span>
               <span className="text-lg font-bold text-emerald-900">{formatMoney(summary.balance)}</span>
@@ -453,12 +648,15 @@ export default function CajaMovimientosPage() {
                 <label className="block text-xs font-medium uppercase tracking-wider text-slate-400">Tipo</label>
                 <select
                   value={filters.type}
-                  onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value as '' | 'income' | 'expense' }))}
+                  onChange={(e) =>
+                    setFilters((f) => ({ ...f, type: e.target.value as '' | 'income' | 'expense' | 'internal_transfer' }))
+                  }
                   className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 py-2.5 pl-3 pr-9 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
                 >
                   <option value="">Todos</option>
                   <option value="income">Ingreso</option>
                   <option value="expense">Egreso</option>
+                  <option value="internal_transfer">Transferencia interna</option>
                 </select>
               </div>
               <div className="sm:col-span-2 lg:col-span-1">
@@ -553,11 +751,33 @@ export default function CajaMovimientosPage() {
                           <td className="px-5 py-4">
                             <span
                               className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-                                t.anulado_at ? 'bg-slate-200 text-slate-600' : t.type === 'income' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                                t.anulado_at
+                                  ? 'bg-slate-200 text-slate-600'
+                                  : t.type === 'internal_transfer'
+                                  ? 'bg-sky-100 text-sky-900'
+                                  : t.type === 'income'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-rose-100 text-rose-800'
                               }`}
                             >
-                              <span className={`h-1.5 w-1.5 rounded-full ${t.anulado_at ? 'bg-slate-400' : t.type === 'income' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                              {t.anulado_at ? 'Anulado' : t.type === 'income' ? 'Ingreso' : 'Egreso'}
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${
+                                  t.anulado_at
+                                    ? 'bg-slate-400'
+                                    : t.type === 'internal_transfer'
+                                    ? 'bg-sky-500'
+                                    : t.type === 'income'
+                                    ? 'bg-emerald-500'
+                                    : 'bg-rose-500'
+                                }`}
+                              />
+                              {t.anulado_at
+                                ? 'Anulado'
+                                : t.type === 'internal_transfer'
+                                ? 'Transf. interna'
+                                : t.type === 'income'
+                                ? 'Ingreso'
+                                : 'Egreso'}
                             </span>
                           </td>
                           <td className="px-5 py-4 font-medium text-slate-900">
@@ -565,12 +785,31 @@ export default function CajaMovimientosPage() {
                             {t.anulado_reason && <span className="block text-xs font-normal text-slate-500">Motivo: {t.anulado_reason}</span>}
                           </td>
                           <td className="hidden px-5 py-4 text-slate-600 sm:table-cell">
-                            {t.type === 'income' ? (t.income_type ? INCOME_TYPE_LABELS[t.income_type] ?? t.income_type : '—') : (t.category ? EXPENSE_CATEGORY_LABELS[t.category] ?? t.category : '—')}
+                            {t.type === 'internal_transfer'
+                              ? `${t.internal_from_book === 'escuela' ? 'Escuela' : 'DRA'} → ${t.internal_to_book === 'escuela' ? 'Escuela' : 'DRA'}`
+                              : t.type === 'income'
+                              ? t.income_type
+                                ? INCOME_TYPE_LABELS[t.income_type] ?? t.income_type
+                                : '—'
+                              : t.category
+                              ? EXPENSE_CATEGORY_LABELS[t.category] ?? t.category
+                              : '—'}
                           </td>
                           <td className="hidden px-5 py-4 text-slate-600 md:table-cell">{PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method}</td>
                           <td className="whitespace-nowrap px-5 py-4 text-right">
-                            <span className={`font-semibold tabular-nums ${t.anulado_at ? 'text-slate-400 line-through' : t.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {t.type === 'income' ? '+' : '−'} {formatMoney(t.amount)}
+                            <span
+                              className={`font-semibold tabular-nums ${
+                                t.anulado_at
+                                  ? 'text-slate-400 line-through'
+                                  : t.type === 'internal_transfer'
+                                  ? 'text-slate-600'
+                                  : t.type === 'income'
+                                  ? 'text-emerald-600'
+                                  : 'text-rose-600'
+                              }`}
+                            >
+                              {t.type === 'internal_transfer' ? '' : t.type === 'income' ? '+' : '−'}{' '}
+                              {formatMoney(t.amount)}
                             </span>
                           </td>
                           <td className="hidden px-5 py-4 text-slate-500 lg:table-cell">{t.created_by_name || '—'}</td>
@@ -584,14 +823,16 @@ export default function CajaMovimientosPage() {
                                     <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
                                   </span>
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={() => startEdit(t)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-                                >
-                                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                                  Editar
-                                </button>
+                                {t.type !== 'internal_transfer' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => startEdit(t)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                                  >
+                                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                                    Editar
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => startAnulate(t)}
@@ -701,9 +942,23 @@ export default function CajaMovimientosPage() {
                           onChange={(e) => setEditForm((f) => ({ ...f, paymentMethod: e.target.value as 'efectivo' | 'transferencia' | 'tarjeta' }))}
                           className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                         >
-                          {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                          {paymentMethodOptions.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                         </select>
                       </div>
+                      {editForm.paymentMethod === 'transferencia' && (
+                        <div>
+                          <label className="block text-xs font-medium text-slate-500">Banco</label>
+                          <select
+                            value={editForm.transferBank}
+                            onChange={(e) => setEditForm((f) => ({ ...f, transferBank: e.target.value as TransferBankId }))}
+                            className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                          >
+                            {TRANSFER_BANK_OPTIONS.map((o) => (
+                              <option key={o.id} value={o.id}>{o.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                       <div>
                         <label className="block text-xs font-medium text-slate-500">Observaciones</label>
                         <input
@@ -798,9 +1053,23 @@ export default function CajaMovimientosPage() {
                     onChange={(e) => setEditForm((f) => ({ ...f, paymentMethod: e.target.value as 'efectivo' | 'transferencia' | 'tarjeta' }))}
                     className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3 text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20"
                   >
-                    {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    {paymentMethodOptions.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
+                {editForm.paymentMethod === 'transferencia' && (
+                  <div className="rounded-xl border border-sky-100 bg-sky-50/50 px-4 py-3">
+                    <label className="block text-sm font-medium text-slate-800">Banco de la transferencia</label>
+                    <select
+                      value={editForm.transferBank}
+                      onChange={(e) => setEditForm((f) => ({ ...f, transferBank: e.target.value as TransferBankId }))}
+                      className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm"
+                    >
+                      {TRANSFER_BANK_OPTIONS.map((o) => (
+                        <option key={o.id} value={o.id}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-slate-700">Observaciones</label>
                   <textarea
@@ -877,9 +1146,24 @@ export default function CajaMovimientosPage() {
                     onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value as 'efectivo' | 'transferencia' | 'tarjeta' }))}
                     className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3 text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
                   >
-                    {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    {paymentMethodOptions.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
+                {form.paymentMethod === 'transferencia' && (
+                  <div className="rounded-xl border border-sky-100 bg-sky-50/50 px-4 py-3">
+                    <label className="block text-sm font-medium text-slate-800">Banco de la transferencia</label>
+                    <p className="mt-0.5 text-xs text-slate-500">Seleccione la cuenta donde ingresó o salió el valor.</p>
+                    <select
+                      value={form.transferBank}
+                      onChange={(e) => setForm((f) => ({ ...f, transferBank: e.target.value as TransferBankId }))}
+                      className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
+                    >
+                      {TRANSFER_BANK_OPTIONS.map((o) => (
+                        <option key={o.id} value={o.id}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-slate-700">Observaciones</label>
                   <textarea
@@ -943,9 +1227,24 @@ export default function CajaMovimientosPage() {
                     onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value as 'efectivo' | 'transferencia' | 'tarjeta' }))}
                     className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3 text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
                   >
-                    {Object.entries(PAYMENT_METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    {paymentMethodOptions.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
+                {form.paymentMethod === 'transferencia' && (
+                  <div className="rounded-xl border border-sky-100 bg-sky-50/50 px-4 py-3">
+                    <label className="block text-sm font-medium text-slate-800">Banco de la transferencia</label>
+                    <p className="mt-0.5 text-xs text-slate-500">Seleccione la cuenta desde la que salió el pago.</p>
+                    <select
+                      value={form.transferBank}
+                      onChange={(e) => setForm((f) => ({ ...f, transferBank: e.target.value as TransferBankId }))}
+                      className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
+                    >
+                      {TRANSFER_BANK_OPTIONS.map((o) => (
+                        <option key={o.id} value={o.id}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-slate-700">Observaciones</label>
                   <textarea
@@ -964,7 +1263,133 @@ export default function CajaMovimientosPage() {
             </div>
           </div>
         )}
+
+        {showInternalForm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-slate-200/90 bg-white p-6 shadow-2xl lg:p-8 max-h-[90vh] overflow-y-auto">
+              <h3 className="text-xl font-semibold text-slate-900">Transferencia entre cuentas</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                No se registra como ingreso/egreso operativo; ajusta balances entre Escuela y DRA. Requiere caja abierta en el libro de <strong>origen</strong>.
+              </p>
+              <form onSubmit={handleInternalSubmit} className="mt-6 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Desde (libro origen)</label>
+                  <select
+                    value={internalForm.fromBook}
+                    onChange={(e) => setInternalForm((f) => ({ ...f, fromBook: e.target.value as CashBook }))}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3 text-slate-900"
+                  >
+                    <option value="escuela">Escuela</option>
+                    <option value="dra">DRA</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Hacia</label>
+                  <select
+                    value={internalForm.toBook}
+                    onChange={(e) => setInternalForm((f) => ({ ...f, toBook: e.target.value as CashBook }))}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3 text-slate-900"
+                  >
+                    <option value="escuela">Escuela</option>
+                    <option value="dra">DRA</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Canal</label>
+                  <select
+                    value={internalForm.channel}
+                    onChange={(e) =>
+                      setInternalForm((f) => ({ ...f, channel: e.target.value as 'efectivo' | 'transferencia' }))
+                    }
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3 text-slate-900"
+                  >
+                    <option value="transferencia">Transferencia</option>
+                    <option value="efectivo">Efectivo</option>
+                  </select>
+                </div>
+                {internalForm.channel === 'transferencia' && (
+                  <div className="rounded-xl border border-sky-100 bg-sky-50/50 px-4 py-3">
+                    <label className="block text-sm font-medium text-slate-800">Banco de la transferencia</label>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Cuenta del libro <strong>origen</strong> ({internalForm.fromBook === 'dra' ? 'DRA' : 'Escuela'}) por la que se movió el valor.
+                    </p>
+                    <select
+                      value={internalForm.transferBank}
+                      onChange={(e) =>
+                        setInternalForm((f) => ({ ...f, transferBank: e.target.value as TransferBankId }))
+                      }
+                      className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
+                    >
+                      {TRANSFER_BANK_OPTIONS.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Monto *</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={internalForm.amount}
+                    onChange={(e) => setInternalForm((f) => ({ ...f, amount: e.target.value }))}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Concepto *</label>
+                  <input
+                    value={internalForm.concept}
+                    onChange={(e) => setInternalForm((f) => ({ ...f, concept: e.target.value }))}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Observaciones</label>
+                  <textarea
+                    value={internalForm.notes}
+                    onChange={(e) => setInternalForm((f) => ({ ...f, notes: e.target.value }))}
+                    rows={2}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3"
+                  />
+                </div>
+                {message && <p className="text-sm font-medium text-rose-600">{message}</p>}
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowInternalForm(false);
+                      setMessage('');
+                    }}
+                    className="flex-1 rounded-xl border border-slate-300 bg-white py-3 text-sm font-semibold text-slate-700"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="flex-1 rounded-xl bg-sky-600 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    {submitting ? 'Guardando...' : 'Registrar'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+export default function CajaMovimientosPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-slate-500">Cargando movimientos…</div>}>
+      <CajaMovimientosPageInner />
+    </Suspense>
   );
 }

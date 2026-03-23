@@ -19,6 +19,7 @@ Estas migraciones deben ejecutarse **en el SQL Editor de Supabase** (Dashboard �
 13. `021_cash_sessions_and_transactions.sql` — módulo Caja: sesiones diarias (apertura/cierre) y movimientos (ingresos/egresos).
 14. `022_cash_anulado_and_audit.sql` — anulación de movimientos (soft delete) y tabla de auditoría para ediciones/anulaciones con código de administrador. Opcional: variable de entorno `CASH_ADMIN_CODE` (por defecto 3651).
 15. `025_enrollment_discount.sql` — descuentos en inscripción: precio original, descuento aplicado y total final en `user_profiles`; opcional `discount_applied` en `payments` para el pago inicial.
+16. `026_cash_dual_book_internal_transfer.sql` — caja dual **Escuela / DRA**: sesiones por `(fecha, libro)`, destino de fondos en movimientos, tipo `internal_transfer` (no cuenta como ingreso/egreso operativo; detalle y ajuste de balance por libro).
 
 ## Cómo aplicar la migración 010 (precio y pagos)
 

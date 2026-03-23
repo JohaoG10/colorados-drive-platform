@@ -23,6 +23,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 interface CashSummary {
   sessionId: string;
   date: string;
+  cashBook?: string;
   openingAmount: number;
   totalIncome: number;
   totalExpense: number;
@@ -51,9 +52,13 @@ interface CashAlert {
 }
 
 interface FinancialDashboard {
+  view?: string;
   summary: CashSummary | null;
+  summaryDra?: CashSummary | null;
   last7Days: { date: string; totalIncome: number; totalExpense: number; balance: number; count: number }[];
+  last7DaysDra?: { date: string; totalIncome: number; totalExpense: number; balance: number; count: number }[];
   monthlyStats: MonthlyStat[];
+  monthlyStatsDra?: MonthlyStat[];
   alerts: CashAlert[];
 }
 
@@ -98,12 +103,16 @@ export default function CajaDashboardPage() {
   const [openModal, setOpenModal] = useState(false);
   const [openAmount, setOpenAmount] = useState('');
   const [openDate, setOpenDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [openCashBook, setOpenCashBook] = useState<'escuela' | 'dra'>('escuela');
+  /** Libro usado solo para gráficos y bloque "Este mes". */
+  const [chartBook, setChartBook] = useState<'escuela' | 'dra'>('escuela');
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
 
   const load = () => {
     if (!token) return;
-    fetch(`${API_URL}/api/admin/cash/dashboard`, { headers: getAuthHeaders(token) })
+    setLoading(true);
+    fetch(`${API_URL}/api/admin/cash/dashboard?view=all`, { headers: getAuthHeaders(token) })
       .then((r) => {
         if (r.status === 401) triggerSessionExpired();
         return r.json();
@@ -130,7 +139,7 @@ export default function CajaDashboardPage() {
       const res = await fetch(`${API_URL}/api/admin/cash/open`, {
         method: 'POST',
         headers: { ...getAuthHeaders(token!), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: openDate, openingAmount: amount }),
+        body: JSON.stringify({ date: openDate, openingAmount: amount, cashBook: openCashBook }),
       });
       const data = await res.json();
       if (res.status === 401) triggerSessionExpired();
@@ -149,10 +158,12 @@ export default function CajaDashboardPage() {
     setSubmitting(false);
   };
 
-  const summary = dashboard?.summary ?? null;
+  const summaryEscuela = dashboard?.summary ?? null;
+  const summaryDra = dashboard?.summaryDra ?? null;
   const alerts = dashboard?.alerts ?? [];
-  const last7Days = dashboard?.last7Days ?? [];
-  const monthlyStats = dashboard?.monthlyStats ?? [];
+  const last7Days = chartBook === 'dra' ? dashboard?.last7DaysDra ?? [] : dashboard?.last7Days ?? [];
+  const monthlyStats =
+    chartBook === 'dra' ? dashboard?.monthlyStatsDra ?? [] : dashboard?.monthlyStats ?? [];
 
   const chart7Data = [...last7Days].reverse().map((d) => ({
     fecha: formatShortDate(d.date),
@@ -182,57 +193,41 @@ export default function CajaDashboardPage() {
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
                 Caja
               </h1>
-              <p className="mt-1 max-w-xl text-sm text-slate-500 sm:text-base">
-                Control de flujo de efectivo, ingresos y egresos del día. Abre la caja, registra movimientos y cierra al finalizar.
+              <p className="mt-1 max-w-2xl text-sm text-slate-500 sm:text-base leading-relaxed">
+                Dos libros independientes: <strong className="text-slate-700">Escuela</strong> (efectivo, transferencia y tarjeta) y{' '}
+                <strong className="text-slate-700">DRA</strong> (efectivo y transferencia). Cada uno con su propia sesión del día.
               </p>
+              <p className="mt-3 text-xs font-medium uppercase tracking-wider text-slate-400">
+                Gráficos y tendencias
+              </p>
+              <div className="mt-2 inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                {(['escuela', 'dra'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setChartBook(v)}
+                    className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                      chartBook === v ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {v === 'escuela' ? 'Escuela' : 'DRA'}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              {!loading && !summary && (
-                <button
-                  type="button"
-                  onClick={() => setOpenModal(true)}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
-                >
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                  </svg>
-                  Abrir caja del día
-                </button>
-              )}
-              {!loading && summary?.status === 'open' && (
-                <>
-                  <Link
-                    href="/admin/caja/movimientos"
-                    className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-                  >
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                    </svg>
-                    Registrar movimiento
-                  </Link>
-                  <Link
-                    href="/admin/caja/cerrar"
-                    className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
-                  >
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Cerrar caja
-                  </Link>
-                </>
-              )}
               <Link
                 href="/admin/caja/movimientos"
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
               >
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                Historial
+                Movimientos
               </Link>
               <Link
                 href="/admin/caja/reportes"
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
               >
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.5a2 2 0 012 2v5.5a2 2 0 01-2 2z" />
@@ -250,7 +245,7 @@ export default function CajaDashboardPage() {
             <div className="flex flex-col gap-3">
               {alerts.map((alert, i) => (
                 <div
-                  key={`${alert.type}-${alert.date ?? i}`}
+                  key={`${alert.type}-${alert.sessionId ?? `a${i}`}-${alert.date ?? '—'}`}
                   className={`flex items-start gap-4 rounded-2xl border px-5 py-4 shadow-sm ${
                     alert.severity === 'error'
                       ? 'border-rose-200/80 bg-rose-50/80 text-rose-900'
@@ -286,101 +281,121 @@ export default function CajaDashboardPage() {
           </div>
         )}
 
-        {/* ─── Estado vacío: sin caja abierta ───────────────────────────────── */}
-        {!loading && !summary && (
-          <section className="mb-10">
-            <div className="relative overflow-hidden rounded-3xl border border-slate-200/90 bg-gradient-to-br from-slate-50 via-white to-emerald-50/30 px-8 py-14 shadow-lg shadow-slate-200/40 sm:px-12 sm:py-16">
-              <div className="absolute right-0 top-0 h-64 w-64 translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-100/50 blur-3xl" />
-              <div className="absolute bottom-0 left-0 h-48 w-48 -translate-x-1/2 translate-y-1/2 rounded-full bg-slate-100/60 blur-2xl" />
-              <div className="relative flex flex-col items-center text-center">
-                <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm">
-                  <svg className="h-10 w-10 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2h-2m-4-1V7a2 2 0 012-2h2a2 2 0 012 2v1m-4 0h10M8 13h8" />
-                  </svg>
-                </div>
-                <h2 className="mt-6 text-xl font-bold text-slate-900 sm:text-2xl">
-                  No hay caja abierta para hoy
-                </h2>
-                <p className="mt-2 max-w-md text-sm leading-relaxed text-slate-500">
-                  Abre la caja para comenzar a registrar ingresos y egresos del día. Podrás ver el balance en tiempo real y cerrar la caja al finalizar.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setOpenModal(true)}
-                  className="mt-8 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-600/25 transition hover:bg-emerald-700 hover:shadow-emerald-600/30 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
-                >
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                  </svg>
-                  Abrir caja del día
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ─── Resumen del día + KPIs ──────────────────────────────────────── */}
-        {!loading && summary && (
-          <section className="mb-10">
-            <div className="mb-6 flex flex-wrap items-center gap-3">
-              <span
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
-                  summary.status === 'open'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : 'bg-slate-200/80 text-slate-700'
-                }`}
+        {/* ─── Resumen del día: Escuela + DRA ─────────────────────────────── */}
+        {!loading && (
+          <section className="mb-10 grid gap-6 lg:grid-cols-2">
+            {(
+              [
+                {
+                  key: 'escuela' as const,
+                  label: 'Caja Escuela',
+                  sub: 'Efectivo, transferencia y tarjeta',
+                  summary: summaryEscuela,
+                  ring: 'ring-emerald-500/10',
+                  border: 'border-emerald-100',
+                },
+                {
+                  key: 'dra' as const,
+                  label: 'Caja DRA',
+                  sub: 'Efectivo y transferencia entre cuentas',
+                  summary: summaryDra,
+                  ring: 'ring-violet-500/10',
+                  border: 'border-violet-100',
+                },
+              ] as const
+            ).map(({ key, label, sub, summary, ring, border }) => (
+              <div
+                key={key}
+                className={`flex flex-col rounded-3xl border ${border} bg-white p-6 shadow-sm ring-1 ${ring} sm:p-7`}
               >
-                <span className={`h-2 w-2 rounded-full ${summary.status === 'open' ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-                {summary.status === 'open' ? 'Abierta' : 'Cerrada'}
-              </span>
-              <span className="text-sm text-slate-500">
-                {formatLocalDate(summary.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-              </span>
-            </div>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-bold tracking-tight text-slate-900">{label}</h2>
+                    <p className="mt-1 text-xs text-slate-500 leading-relaxed">{sub}</p>
+                  </div>
+                  {summary ? (
+                    <span
+                      className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+                        summary.status === 'open' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {summary.status === 'open' ? 'Abierta' : 'Cerrada'}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900">
+                      Sin sesión hoy
+                    </span>
+                  )}
+                </div>
 
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-              <div className="group rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm transition hover:shadow-md hover:border-slate-300/80">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium uppercase tracking-wider text-slate-400">Monto inicial</span>
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition group-hover:bg-slate-200/80">
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </span>
-                </div>
-                <p className="mt-4 text-2xl font-bold tracking-tight text-slate-900 lg:text-3xl">{formatMoney(summary.openingAmount)}</p>
+                {summary ? (
+                  <>
+                    <p className="mt-3 text-sm capitalize text-slate-500">
+                      {formatLocalDate(summary.date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                    </p>
+                    <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      <div className="rounded-2xl border border-slate-100 bg-slate-50/80 p-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Inicial</p>
+                        <p className="mt-1 text-base font-bold tabular-nums text-slate-900">{formatMoney(summary.openingAmount)}</p>
+                      </div>
+                      <div className="rounded-2xl border border-emerald-100/80 bg-emerald-50/40 p-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700/90">Ingresos</p>
+                        <p className="mt-1 text-base font-bold tabular-nums text-emerald-600">+{formatMoney(summary.totalIncome)}</p>
+                      </div>
+                      <div className="rounded-2xl border border-rose-100/80 bg-rose-50/40 p-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-700/90">Egresos</p>
+                        <p className="mt-1 text-base font-bold tabular-nums text-rose-600">−{formatMoney(summary.totalExpense)}</p>
+                      </div>
+                      <div className="col-span-2 rounded-2xl border border-slate-200 bg-white p-3 sm:col-span-1">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Balance</p>
+                        <p className="mt-1 text-lg font-bold tabular-nums text-slate-900">{formatMoney(summary.balance)}</p>
+                      </div>
+                    </div>
+                    <p className="mt-4 text-xs text-slate-500">{summary.transactionCount} movimientos en esta sesión</p>
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      <Link
+                        href={`/admin/caja/movimientos?cashBook=${key}`}
+                        className="inline-flex flex-1 min-w-[7.5rem] items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Ver movimientos
+                      </Link>
+                      {summary.status === 'open' ? (
+                        <>
+                          <Link
+                            href={`/admin/caja/movimientos?cashBook=${key}`}
+                            className="inline-flex flex-1 min-w-[7.5rem] items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+                          >
+                            Registrar
+                          </Link>
+                          <Link
+                            href={`/admin/caja/cerrar?cashBook=${key}`}
+                            className="inline-flex items-center justify-center rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            Cerrar caja
+                          </Link>
+                        </>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <div className="mt-8 flex flex-1 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 py-10 text-center">
+                    <p className="max-w-xs text-sm text-slate-500">
+                      Abre la sesión del día para registrar ingresos, egresos y transferencias entre cuentas en este libro.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenCashBook(key);
+                        setOpenModal(true);
+                      }}
+                      className="mt-5 inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+                    >
+                      Abrir {key === 'escuela' ? 'caja Escuela' : 'caja DRA'}
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="group rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm transition hover:shadow-md hover:border-emerald-200/80">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium uppercase tracking-wider text-slate-400">Ingresos</span>
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 transition group-hover:bg-emerald-200/80">
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
-                  </span>
-                </div>
-                <p className="mt-4 text-2xl font-bold tracking-tight text-emerald-600 lg:text-3xl">+ {formatMoney(summary.totalIncome)}</p>
-              </div>
-              <div className="group rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm transition hover:shadow-md hover:border-rose-200/80">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium uppercase tracking-wider text-slate-400">Egresos</span>
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-100 text-rose-600 transition group-hover:bg-rose-200/80">
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 17h8m0 0v-8m0 8l-8-8-4 4-6-6" /></svg>
-                  </span>
-                </div>
-                <p className="mt-4 text-2xl font-bold tracking-tight text-rose-600 lg:text-3xl">− {formatMoney(summary.totalExpense)}</p>
-              </div>
-              <div className="group rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm transition hover:shadow-md hover:border-slate-300/80">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-medium uppercase tracking-wider text-slate-400">Balance actual</span>
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition group-hover:bg-slate-200/80">
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-                  </span>
-                </div>
-                <p className="mt-4 text-2xl font-bold tracking-tight text-slate-900 lg:text-3xl">{formatMoney(summary.balance)}</p>
-              </div>
-            </div>
-
-            <div className="mt-4 flex items-center rounded-2xl border border-slate-200/90 bg-white px-6 py-4 shadow-sm">
-              <span className="text-sm text-slate-500">Transacciones del día</span>
-              <span className="ml-2 text-lg font-bold text-slate-900">{summary.transactionCount}</span>
-            </div>
+            ))}
           </section>
         )}
 
@@ -388,9 +403,12 @@ export default function CajaDashboardPage() {
         {!loading && currentMonth && (
           <section className="mb-10">
             <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm lg:p-8">
-              <div className="mb-6 flex items-center gap-2 border-b border-slate-100 pb-4">
+              <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-slate-100 pb-4">
                 <h2 className="text-lg font-semibold text-slate-900">Este mes</h2>
                 <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600">{currentMonth.monthLabel}</span>
+                <span className="rounded-full bg-slate-900 px-2.5 py-0.5 text-xs font-medium text-white">
+                  {chartBook === 'dra' ? 'DRA' : 'Escuela'}
+                </span>
               </div>
               <div className="grid grid-cols-2 gap-6 sm:grid-cols-4">
                 <div>
@@ -418,7 +436,10 @@ export default function CajaDashboardPage() {
         {!loading && chart7Data.length > 0 && (
           <section className="mb-10">
             <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm lg:p-8">
-              <h2 className="mb-6 text-lg font-semibold text-slate-900">Ingresos vs Egresos · Últimos 7 días</h2>
+              <h2 className="mb-1 text-lg font-semibold text-slate-900">Ingresos vs egresos · 7 días</h2>
+              <p className="mb-6 text-xs font-medium text-slate-500">
+                Libro: {chartBook === 'dra' ? 'DRA' : 'Escuela'}
+              </p>
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={chart7Data} margin={{ top: 16, right: 16, left: 0, bottom: 8 }}>
@@ -450,7 +471,10 @@ export default function CajaDashboardPage() {
         {!loading && chartMonthData.length > 0 && (
           <section>
             <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm lg:p-8">
-              <h2 className="mb-6 text-lg font-semibold text-slate-900">Estadísticas mensuales · Últimos 12 meses</h2>
+              <h2 className="mb-1 text-lg font-semibold text-slate-900">Tendencia mensual · 12 meses</h2>
+              <p className="mb-6 text-xs font-medium text-slate-500">
+                Libro: {chartBook === 'dra' ? 'DRA' : 'Escuela'}
+              </p>
               <div className="h-80">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartMonthData} margin={{ top: 16, right: 16, left: 0, bottom: 8 }} barCategoryGap="28%">
@@ -484,6 +508,17 @@ export default function CajaDashboardPage() {
                     className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3 text-slate-900 outline-none transition focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
                     required
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700">Libro de caja</label>
+                  <select
+                    value={openCashBook}
+                    onChange={(e) => setOpenCashBook(e.target.value as 'escuela' | 'dra')}
+                    className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3 text-slate-900"
+                  >
+                    <option value="escuela">Escuela</option>
+                    <option value="dra">DRA</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700">Monto inicial</label>

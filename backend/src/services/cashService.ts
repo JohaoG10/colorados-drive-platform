@@ -1,8 +1,74 @@
 import { supabaseAdmin } from '../config/supabase';
 
 export type CashSessionStatus = 'open' | 'closed';
-export type CashTransactionType = 'income' | 'expense';
+export type CashBook = 'escuela' | 'dra';
+export type CashTransactionType = 'income' | 'expense' | 'internal_transfer';
 export type PaymentMethod = 'efectivo' | 'transferencia' | 'tarjeta';
+
+/** Destinos de fondos (sub-cuenta) para efectivo y transferencia; tarjeta no usa destino (solo Escuela). */
+export const FUNDS_DESTINATIONS = [
+  'trans_pichincha_escuela',
+  'trans_internacional_escuela',
+  'trans_gye_escuela',
+  'trans_pacifico_escuela',
+  'trans_pichincha_dra',
+  'trans_gye_dra',
+  'trans_pacifico_dra',
+  'efectivo_escuela',
+  'efectivo_dra',
+] as const;
+export type FundsDestination = (typeof FUNDS_DESTINATIONS)[number];
+
+/** Bancos estándar al elegir transferencia (UI). */
+export const TRANSFER_BANK_IDS = ['pichincha', 'guayaquil', 'pacifico'] as const;
+export type TransferBankId = (typeof TRANSFER_BANK_IDS)[number];
+
+export const TRANSFER_BANK_LABELS: Record<TransferBankId, string> = {
+  pichincha: 'Banco Pichincha',
+  guayaquil: 'Banco Guayaquil',
+  pacifico: 'Banco del Pacífico',
+};
+
+export const FUNDS_DESTINATION_LABELS: Record<FundsDestination, string> = {
+  trans_pichincha_escuela: 'Transferencia — Pichincha (Escuela)',
+  trans_internacional_escuela: 'Transferencia — Internacional (Escuela)',
+  trans_gye_escuela: 'Transferencia — Guayaquil (Escuela)',
+  trans_pacifico_escuela: 'Transferencia — Pacífico (Escuela)',
+  trans_pichincha_dra: 'Transferencia — Pichincha (DRA)',
+  trans_gye_dra: 'Transferencia — Guayaquil (DRA)',
+  trans_pacifico_dra: 'Transferencia — Pacífico (DRA)',
+  efectivo_escuela: 'Efectivo — Caja Escuela',
+  efectivo_dra: 'Efectivo — Caja DRA',
+};
+
+/** Mapea banco UI → destino en BD según libro. */
+export function fundsDestinationForTransferBank(cashBook: CashBook, bank: TransferBankId): FundsDestination {
+  if (cashBook === 'dra') {
+    if (bank === 'pichincha') return 'trans_pichincha_dra';
+    if (bank === 'guayaquil') return 'trans_gye_dra';
+    return 'trans_pacifico_dra';
+  }
+  if (bank === 'pichincha') return 'trans_pichincha_escuela';
+  if (bank === 'guayaquil') return 'trans_gye_escuela';
+  return 'trans_pacifico_escuela';
+}
+
+export function parseTransferBankId(q: unknown): TransferBankId | undefined {
+  if (q === 'pichincha' || q === 'guayaquil' || q === 'pacifico') return q;
+  return undefined;
+}
+
+export const INTERNAL_TRANSFER_CHANNELS = ['efectivo', 'transferencia'] as const;
+export type InternalTransferChannel = (typeof INTERNAL_TRANSFER_CHANNELS)[number];
+
+export function parseCashBookQuery(q: unknown): CashBook | 'all' | undefined {
+  if (q === 'all' || q === 'escuela' || q === 'dra') return q;
+  return undefined;
+}
+
+export function normalizeCashBookFromRow(row: { cash_book?: string | null }): CashBook {
+  return row.cash_book === 'dra' ? 'dra' : 'escuela';
+}
 
 export const INCOME_TYPES = [
   'pago_matricula',
@@ -26,6 +92,7 @@ export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 export interface CashSessionRow {
   id: string;
   date: string;
+  cash_book: CashBook;
   opening_amount: number;
   closing_amount: number | null;
   status: CashSessionStatus;
@@ -40,12 +107,17 @@ export interface CashSessionRow {
 export interface CashTransactionRow {
   id: string;
   cash_session_id: string;
+  cash_book: CashBook;
   type: CashTransactionType;
   concept: string;
   category: string | null;
   income_type: string | null;
   payment_method: PaymentMethod;
   amount: number;
+  funds_destination: FundsDestination | null;
+  internal_from_book: CashBook | null;
+  internal_to_book: CashBook | null;
+  internal_channel: InternalTransferChannel | null;
   notes: string | null;
   created_by: string | null;
   created_at: string;
@@ -75,9 +147,11 @@ export interface CashTransactionWithSession extends CashTransactionWithCreator {
 export interface CashSummary {
   sessionId: string;
   date: string;
+  cashBook: CashBook;
   openingAmount: number;
   totalIncome: number;
   totalExpense: number;
+  /** Balance según libro: Escuela = solo efectivo (+ ajustes transferencia interna en efectivo); DRA = efectivo + transferencia (+ internas). */
   balance: number;
   status: CashSessionStatus;
   transactionCount: number;
@@ -113,19 +187,28 @@ export interface CashAlert {
 }
 
 export interface FinancialDashboard {
+  /** Vista solicitada (por defecto escuela). */
+  view: CashBook | 'all';
   summary: CashSummary | null;
+  /** Si view=all, resumen del libro DRA en paralelo. */
+  summaryDra: CashSummary | null;
   last7Days: { date: string; totalIncome: number; totalExpense: number; balance: number; count: number }[];
+  last7DaysDra?: { date: string; totalIncome: number; totalExpense: number; balance: number; count: number }[];
   monthlyStats: MonthlyStat[];
+  monthlyStatsDra?: MonthlyStat[];
   alerts: CashAlert[];
 }
 
 /** Datos completos para exportar reporte (PDF/Excel) */
 export interface CashReportExportData {
+  cashBook: CashBook;
+  bookTitle: string;
   startDate: string;
   endDate: string;
   totalIncome: number;
   totalExpense: number;
   balance: number;
+  balanceDescription: string;
   totalEfectivo?: number;
   totalTransferencia?: number;
   totalTarjeta?: number;
@@ -134,54 +217,226 @@ export interface CashReportExportData {
   countExpense: number;
   byCategory: { label: string; total: number; count: number }[];
   byPaymentMethod: { method: string; total: number; count: number }[];
+  /** Ingresos y egresos operativos (sin anulados). */
   transactions: CashTransactionWithCreator[];
+  /** Movimientos entre libros; no suman a ingreso/egreso operativo. */
+  internalTransfers: CashTransactionWithCreator[];
+}
+
+/** Reporte único: Escuela + DRA + internas consolidadas. */
+export interface CashReportCombinedExportData {
+  startDate: string;
+  endDate: string;
+  escuela: CashReportExportData;
+  dra: CashReportExportData;
+  allInternalTransfers: CashTransactionWithCreator[];
 }
 
 function getUserDisplayName(profile: { full_name?: string | null } | null): string | null {
   return profile?.full_name?.trim() || null;
 }
 
-export async function getOpenSessionForDate(dateStr?: string): Promise<CashSessionRow | null> {
+function mapSessionRow(raw: Record<string, unknown>): CashSessionRow {
+  const r = raw as unknown as CashSessionRow;
+  return { ...r, cash_book: normalizeCashBookFromRow(raw as { cash_book?: string | null }) };
+}
+
+function mapTransactionRow(raw: Record<string, unknown>): CashTransactionRow {
+  const r = raw as unknown as CashTransactionRow;
+  const typeRaw = String(raw.type || 'income');
+  const type: CashTransactionType =
+    typeRaw === 'internal_transfer' ? 'internal_transfer' : typeRaw === 'expense' ? 'expense' : 'income';
+  return {
+    ...r,
+    cash_book: normalizeCashBookFromRow(raw as { cash_book?: string | null }),
+    type,
+    funds_destination: (raw.funds_destination as FundsDestination | null | undefined) ?? null,
+    internal_from_book: (raw.internal_from_book as CashBook | null | undefined) ?? null,
+    internal_to_book: (raw.internal_to_book as CashBook | null | undefined) ?? null,
+    internal_channel: (raw.internal_channel as InternalTransferChannel | null | undefined) ?? null,
+  };
+}
+
+async function loadTransactionsForSessionIds(sessionIds: string[]): Promise<CashTransactionRow[]> {
+  if (sessionIds.length === 0) return [];
+  const { data, error } = await supabaseAdmin
+    .from('cash_transactions')
+    .select('*')
+    .in('cash_session_id', sessionIds)
+    .is('anulado_at', null);
+  if (error) throw new Error(error.message);
+  return (data || []).map((row) => mapTransactionRow(row as Record<string, unknown>));
+}
+
+/** Transferencias internas en el rango de fechas que afectan al libro (aunque el registro cuelgue de la sesión origen). */
+async function fetchInternalTransfersAffectingBook(
+  fromDate: string,
+  toDate: string,
+  book: CashBook
+): Promise<CashTransactionRow[]> {
+  const { data: sessions, error: sErr } = await supabaseAdmin
+    .from('cash_sessions')
+    .select('id')
+    .gte('date', fromDate)
+    .lte('date', toDate);
+  if (sErr) throw new Error(sErr.message);
+  const sessionIds = (sessions || []).map((s: { id: string }) => s.id);
+  if (sessionIds.length === 0) return [];
+  const orFilter =
+    book === 'dra'
+      ? 'internal_from_book.eq.dra,internal_to_book.eq.dra'
+      : 'internal_from_book.eq.escuela,internal_to_book.eq.escuela';
+  const { data, error } = await supabaseAdmin
+    .from('cash_transactions')
+    .select('*')
+    .in('cash_session_id', sessionIds)
+    .eq('type', 'internal_transfer')
+    .is('anulado_at', null)
+    .or(orFilter);
+  if (error) throw new Error(error.message);
+  return (data || []).map((row) => mapTransactionRow(row as Record<string, unknown>));
+}
+
+/** Todas las transferencias internas en el rango (una fila por movimiento). */
+async function fetchInternalTransfersInPeriod(fromDate: string, toDate: string): Promise<CashTransactionRow[]> {
+  const { data: sessions, error: sErr } = await supabaseAdmin
+    .from('cash_sessions')
+    .select('id')
+    .gte('date', fromDate)
+    .lte('date', toDate);
+  if (sErr) throw new Error(sErr.message);
+  const sessionIds = (sessions || []).map((s: { id: string }) => s.id);
+  if (sessionIds.length === 0) return [];
+  const { data, error } = await supabaseAdmin
+    .from('cash_transactions')
+    .select('*')
+    .in('cash_session_id', sessionIds)
+    .eq('type', 'internal_transfer')
+    .is('anulado_at', null);
+  if (error) throw new Error(error.message);
+  return (data || []).map((row) => mapTransactionRow(row as Record<string, unknown>));
+}
+
+async function attachCreatorNames<T extends { created_by: string | null }>(transactions: T[]): Promise<(T & { created_by_name?: string | null })[]> {
+  const creatorIds = [...new Set(transactions.map((t) => t.created_by).filter(Boolean))] as string[];
+  let profiles: Map<string, string | null> = new Map();
+  if (creatorIds.length > 0) {
+    const { data: profilesData } = await supabaseAdmin
+      .from('user_profiles')
+      .select('id, full_name')
+      .in('id', creatorIds);
+    profilesData?.forEach((p: { id: string; full_name: string | null }) => {
+      profiles.set(p.id, p.full_name?.trim() || null);
+    });
+  }
+  return transactions.map((t) => ({
+    ...t,
+    created_by_name: t.created_by ? profiles.get(t.created_by) ?? null : null,
+  }));
+}
+
+/** Cierre de caja según libro: Escuela solo efectivo + internas en efectivo; DRA todos los métodos + internas. */
+export async function computeBookClosing(sessionId: string): Promise<number> {
+  const { data: sessionRaw, error: fetchErr } = await supabaseAdmin
+    .from('cash_sessions')
+    .select('*')
+    .eq('id', sessionId)
+    .single();
+  if (fetchErr || !sessionRaw) throw new Error('Sesión no encontrada');
+  const session = mapSessionRow(sessionRaw as Record<string, unknown>);
+  const book = session.cash_book;
+  const date = session.date;
+  const opening = Number(session.opening_amount);
+
+  const { data: daySessionsRaw } = await supabaseAdmin.from('cash_sessions').select('id').eq('date', date);
+  const daySessionIds = (daySessionsRaw || []).map((s: { id: string }) => s.id);
+  const dayTxs = await loadTransactionsForSessionIds(daySessionIds);
+  const internalTxs = dayTxs.filter((t) => t.type === 'internal_transfer');
+
+  if (book === 'escuela') {
+    let closing = opening;
+    const myNormal = dayTxs.filter(
+      (t) => t.cash_session_id === sessionId && (t.type === 'income' || t.type === 'expense')
+    );
+    for (const t of myNormal) {
+      if (t.payment_method !== 'efectivo') continue;
+      const a = Number(t.amount);
+      if (t.type === 'income') closing += a;
+      else closing -= a;
+    }
+    for (const t of internalTxs) {
+      const a = Number(t.amount);
+      if (t.internal_channel !== 'efectivo') continue;
+      if (t.internal_from_book === 'escuela') closing -= a;
+      if (t.internal_to_book === 'escuela') closing += a;
+    }
+    return closing;
+  }
+
+  let closing = opening;
+  const myNormal = dayTxs.filter(
+    (t) => t.cash_session_id === sessionId && (t.type === 'income' || t.type === 'expense')
+  );
+  for (const t of myNormal) {
+    const a = Number(t.amount);
+    if (t.type === 'income') closing += a;
+    else closing -= a;
+  }
+  for (const t of internalTxs) {
+    const a = Number(t.amount);
+    if (t.internal_to_book === 'dra') closing += a;
+    if (t.internal_from_book === 'dra') closing -= a;
+  }
+  return closing;
+}
+
+export async function getOpenSessionForDate(dateStr?: string, cashBook: CashBook = 'escuela'): Promise<CashSessionRow | null> {
   const date = dateStr || new Date().toISOString().slice(0, 10);
   const { data, error } = await supabaseAdmin
     .from('cash_sessions')
     .select('*')
     .eq('date', date)
+    .eq('cash_book', cashBook)
     .eq('status', 'open')
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return (data as CashSessionRow) || null;
+  return data ? mapSessionRow(data as Record<string, unknown>) : null;
 }
 
-export async function getSessionByDate(dateStr: string): Promise<CashSessionRow | null> {
+export async function getSessionByDate(dateStr: string, cashBook: CashBook = 'escuela'): Promise<CashSessionRow | null> {
   const { data, error } = await supabaseAdmin
     .from('cash_sessions')
     .select('*')
     .eq('date', dateStr)
+    .eq('cash_book', cashBook)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return (data as CashSessionRow) || null;
+  return data ? mapSessionRow(data as Record<string, unknown>) : null;
 }
 
 export async function openSession(params: {
   date: string;
   openingAmount: number;
   openedBy: string;
+  cashBook?: CashBook;
 }): Promise<CashSessionRow> {
+  const cashBook = params.cashBook ?? 'escuela';
   if (params.openingAmount < 0) throw new Error('El monto inicial no puede ser negativo');
   const { data: existing } = await supabaseAdmin
     .from('cash_sessions')
     .select('id, status')
     .eq('date', params.date)
+    .eq('cash_book', cashBook)
     .maybeSingle();
   if (existing) {
-    if (existing.status === 'open') throw new Error('Ya existe una caja abierta para esta fecha');
-    throw new Error('Ya existe una caja cerrada para esta fecha');
+    if (existing.status === 'open') throw new Error('Ya existe una caja abierta para esta fecha y libro');
+    throw new Error('Ya existe una caja cerrada para esta fecha y libro');
   }
   const { data, error } = await supabaseAdmin
     .from('cash_sessions')
     .insert({
       date: params.date,
+      cash_book: cashBook,
       opening_amount: params.openingAmount,
       status: 'open',
       opened_by: params.openedBy,
@@ -189,24 +444,23 @@ export async function openSession(params: {
     .select()
     .single();
   if (error) throw new Error(error.message);
-  return data as CashSessionRow;
+  return mapSessionRow(data as Record<string, unknown>);
 }
 
 export async function closeSession(params: {
   sessionId: string;
   closedBy: string;
 }): Promise<CashSessionRow> {
-  const { data: session, error: fetchErr } = await supabaseAdmin
+  const { data: sessionRaw, error: fetchErr } = await supabaseAdmin
     .from('cash_sessions')
     .select('*')
     .eq('id', params.sessionId)
     .single();
-  if (fetchErr || !session) throw new Error('Sesión no encontrada');
-  if ((session as CashSessionRow).status !== 'open') throw new Error('La caja ya está cerrada');
+  if (fetchErr || !sessionRaw) throw new Error('Sesión no encontrada');
+  const session = mapSessionRow(sessionRaw as Record<string, unknown>);
+  if (session.status !== 'open') throw new Error('La caja ya está cerrada');
 
-  const { totalIncome, totalExpense } = await getTotalsForSession(params.sessionId);
-  const opening = Number((session as CashSessionRow).opening_amount);
-  const closingAmount = opening + totalIncome - totalExpense;
+  const closingAmount = await computeBookClosing(params.sessionId);
 
   const { data: updated, error } = await supabaseAdmin
     .from('cash_sessions')
@@ -221,7 +475,7 @@ export async function closeSession(params: {
     .select()
     .single();
   if (error) throw new Error(error.message);
-  return updated as CashSessionRow;
+  return mapSessionRow(updated as Record<string, unknown>);
 }
 
 export async function getTotalsForSession(sessionId: string): Promise<{ totalIncome: number; totalExpense: number }> {
@@ -234,32 +488,76 @@ export async function getTotalsForSession(sessionId: string): Promise<{ totalInc
   let totalIncome = 0;
   let totalExpense = 0;
   (data || []).forEach((row: { type: string; amount: number }) => {
+    if (row.type === 'internal_transfer') return;
     if (row.type === 'income') totalIncome += Number(row.amount);
-    else totalExpense += Number(row.amount);
+    else if (row.type === 'expense') totalExpense += Number(row.amount);
   });
   return { totalIncome, totalExpense };
 }
 
-export async function getTodaySummary(): Promise<CashSummary | null> {
+export async function getTodaySummary(cashBook: CashBook = 'escuela'): Promise<CashSummary | null> {
   const today = new Date().toISOString().slice(0, 10);
-  const session = await getOpenSessionForDate(today);
+  const session = await getOpenSessionForDate(today, cashBook);
   if (!session) return null;
-  const { totalIncome, totalExpense } = await getTotalsForSession(session.id);
   const opening = Number(session.opening_amount);
-  const { count } = await supabaseAdmin
-    .from('cash_transactions')
-    .select('id', { count: 'exact', head: true })
-    .eq('cash_session_id', session.id);
+  const [{ totalIncome, totalExpense }, balance, countRes] = await Promise.all([
+    getTotalsForSession(session.id),
+    computeBookClosing(session.id),
+    supabaseAdmin
+      .from('cash_transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('cash_session_id', session.id)
+      .is('anulado_at', null),
+  ]);
   return {
     sessionId: session.id,
     date: session.date,
+    cashBook: session.cash_book,
     openingAmount: opening,
     totalIncome,
     totalExpense,
-    balance: opening + totalIncome - totalExpense,
+    balance,
     status: session.status,
-    transactionCount: count ?? 0,
+    transactionCount: countRes.count ?? 0,
   };
+}
+
+const DEST_BY_BOOK: Record<CashBook, { trans: FundsDestination[]; efectivo: FundsDestination }> = {
+  escuela: {
+    trans: [
+      'trans_pichincha_escuela',
+      'trans_gye_escuela',
+      'trans_pacifico_escuela',
+      'trans_internacional_escuela',
+    ],
+    efectivo: 'efectivo_escuela',
+  },
+  dra: {
+    trans: ['trans_pichincha_dra', 'trans_gye_dra', 'trans_pacifico_dra'],
+    efectivo: 'efectivo_dra',
+  },
+};
+
+/** Valida y normaliza destino de fondos según método y libro de caja. */
+export function validateFundsDestination(
+  paymentMethod: PaymentMethod,
+  cashBook: CashBook,
+  dest: FundsDestination | null | undefined
+): FundsDestination | null {
+  if (paymentMethod === 'tarjeta') {
+    if (cashBook !== 'escuela') throw new Error('Los pagos con tarjeta solo se registran en la caja Escuela');
+    return null;
+  }
+  if (!dest) throw new Error('Debe indicar el destino de los fondos (cuenta o caja)');
+  if (paymentMethod === 'efectivo') {
+    const want = DEST_BY_BOOK[cashBook].efectivo;
+    if (dest !== want) throw new Error('El destino de efectivo no corresponde al libro de caja seleccionado');
+    return dest;
+  }
+  if (!DEST_BY_BOOK[cashBook].trans.includes(dest)) {
+    throw new Error('El destino de transferencia no corresponde al libro de caja seleccionado');
+  }
+  return dest;
 }
 
 export async function addIncome(params: {
@@ -268,34 +566,45 @@ export async function addIncome(params: {
   incomeType: IncomeType;
   amount: number;
   paymentMethod: PaymentMethod;
+  fundsDestination?: FundsDestination | null;
+  transferBank?: TransferBankId | null;
   notes?: string | null;
   createdBy: string | null;
 }): Promise<CashTransactionRow> {
   if (params.amount <= 0) throw new Error('El monto debe ser mayor a 0');
-  const { data: session } = await supabaseAdmin
+  const { data: sessionRaw } = await supabaseAdmin
     .from('cash_sessions')
-    .select('status')
+    .select('status, cash_book')
     .eq('id', params.sessionId)
     .single();
-  if (!session || (session as { status: string }).status !== 'open') {
+  if (!sessionRaw || (sessionRaw as { status: string }).status !== 'open') {
     throw new Error('La caja está cerrada o no existe. No se pueden agregar movimientos.');
   }
+  const cashBook = normalizeCashBookFromRow(sessionRaw as { cash_book?: string | null });
+  const destInput =
+    params.paymentMethod === 'transferencia' && params.transferBank
+      ? fundsDestinationForTransferBank(cashBook, params.transferBank)
+      : params.fundsDestination;
+  const funds_destination = validateFundsDestination(params.paymentMethod, cashBook, destInput);
+
   const { data, error } = await supabaseAdmin
     .from('cash_transactions')
     .insert({
       cash_session_id: params.sessionId,
+      cash_book: cashBook,
       type: 'income',
       concept: params.concept.trim(),
       income_type: params.incomeType,
       payment_method: params.paymentMethod,
       amount: params.amount,
+      funds_destination,
       notes: params.notes?.trim() || null,
       created_by: params.createdBy,
     })
     .select()
     .single();
   if (error) throw new Error(error.message);
-  return data as CashTransactionRow;
+  return mapTransactionRow(data as Record<string, unknown>);
 }
 
 export async function addExpense(params: {
@@ -304,34 +613,97 @@ export async function addExpense(params: {
   category: ExpenseCategory;
   amount: number;
   paymentMethod: PaymentMethod;
+  fundsDestination?: FundsDestination | null;
+  transferBank?: TransferBankId | null;
   notes?: string | null;
   createdBy: string | null;
 }): Promise<CashTransactionRow> {
   if (params.amount <= 0) throw new Error('El monto debe ser mayor a 0');
-  const { data: session } = await supabaseAdmin
+  const { data: sessionRaw } = await supabaseAdmin
     .from('cash_sessions')
-    .select('status')
+    .select('status, cash_book')
     .eq('id', params.sessionId)
     .single();
-  if (!session || (session as { status: string }).status !== 'open') {
+  if (!sessionRaw || (sessionRaw as { status: string }).status !== 'open') {
     throw new Error('La caja está cerrada o no existe. No se pueden agregar movimientos.');
   }
+  const cashBook = normalizeCashBookFromRow(sessionRaw as { cash_book?: string | null });
+  const destInput =
+    params.paymentMethod === 'transferencia' && params.transferBank
+      ? fundsDestinationForTransferBank(cashBook, params.transferBank)
+      : params.fundsDestination;
+  const funds_destination = validateFundsDestination(params.paymentMethod, cashBook, destInput);
+
   const { data, error } = await supabaseAdmin
     .from('cash_transactions')
     .insert({
       cash_session_id: params.sessionId,
+      cash_book: cashBook,
       type: 'expense',
       concept: params.concept.trim(),
       category: params.category,
       payment_method: params.paymentMethod,
       amount: params.amount,
+      funds_destination,
       notes: params.notes?.trim() || null,
       created_by: params.createdBy,
     })
     .select()
     .single();
   if (error) throw new Error(error.message);
-  return data as CashTransactionRow;
+  return mapTransactionRow(data as Record<string, unknown>);
+}
+
+/** Transferencia entre libros Escuela ↔ DRA (no es ingreso ni egreso operativo; solo detalle y ajuste de balance). */
+export async function addInternalTransfer(params: {
+  date: string;
+  fromBook: CashBook;
+  toBook: CashBook;
+  channel: InternalTransferChannel;
+  amount: number;
+  concept: string;
+  /** Si channel es transferencia, banco de la cuenta usada (mismo criterio que ingresos/egresos). */
+  transferBank?: TransferBankId | null;
+  notes?: string | null;
+  createdBy: string | null;
+}): Promise<CashTransactionRow> {
+  if (params.fromBook === params.toBook) throw new Error('El origen y el destino deben ser distintos');
+  if (params.amount <= 0) throw new Error('El monto debe ser mayor a 0');
+  const session = await getOpenSessionForDate(params.date, params.fromBook);
+  if (!session) {
+    throw new Error(`No hay caja abierta (${params.fromBook}) para la fecha indicada`);
+  }
+  const payment_method: PaymentMethod = params.channel === 'efectivo' ? 'efectivo' : 'transferencia';
+  const funds_destination =
+    params.channel === 'efectivo'
+      ? validateFundsDestination('efectivo', params.fromBook, DEST_BY_BOOK[params.fromBook].efectivo)
+      : validateFundsDestination(
+          'transferencia',
+          params.fromBook,
+          fundsDestinationForTransferBank(params.fromBook, params.transferBank ?? 'pichincha')
+        );
+  const { data, error } = await supabaseAdmin
+    .from('cash_transactions')
+    .insert({
+      cash_session_id: session.id,
+      cash_book: params.fromBook,
+      type: 'internal_transfer',
+      concept: params.concept.trim(),
+      category: null,
+      income_type: null,
+      payment_method,
+      amount: params.amount,
+      funds_destination,
+      internal_from_book: params.fromBook,
+      internal_to_book: params.toBook,
+      internal_channel: params.channel,
+      notes: params.notes?.trim() || null,
+      created_by: params.createdBy,
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return mapTransactionRow(data as Record<string, unknown>);
 }
 
 export async function listTransactionsBySession(sessionId: string): Promise<CashTransactionWithCreator[]> {
@@ -341,7 +713,7 @@ export async function listTransactionsBySession(sessionId: string): Promise<Cash
     .eq('cash_session_id', sessionId)
     .order('created_at', { ascending: true });
   if (error) throw new Error(error.message);
-  const transactions = (rows || []) as CashTransactionRow[];
+  const transactions = (rows || []).map((row) => mapTransactionRow(row as Record<string, unknown>));
   const creatorIds = [...new Set(transactions.map((t) => t.created_by).filter(Boolean))] as string[];
   let profiles: Map<string, string | null> = new Map();
   if (creatorIds.length > 0) {
@@ -364,6 +736,7 @@ export async function listTransactions(params: {
   toDate?: string;
   type?: CashTransactionType;
   sessionId?: string;
+  cashBook?: CashBook | 'all';
   search?: string;
   limit?: number;
   offset?: number;
@@ -378,13 +751,18 @@ export async function listTransactions(params: {
     query = query.eq('type', params.type);
   }
   if (params.fromDate || params.toDate) {
-    const sessionsQuery = supabaseAdmin.from('cash_sessions').select('id, date');
+    const sessionsQuery = supabaseAdmin.from('cash_sessions').select('id, date, cash_book');
     if (params.fromDate) sessionsQuery.gte('date', params.fromDate);
     if (params.toDate) sessionsQuery.lte('date', params.toDate);
+    if (params.cashBook && params.cashBook !== 'all') {
+      sessionsQuery.eq('cash_book', params.cashBook);
+    }
     const { data: sessions } = await sessionsQuery;
     const sessionIds = (sessions || []).map((s: { id: string }) => s.id);
     if (sessionIds.length === 0) return { transactions: [], total: 0 };
     query = query.in('cash_session_id', sessionIds);
+  } else if (params.cashBook && params.cashBook !== 'all' && !params.sessionId) {
+    query = query.eq('cash_book', params.cashBook);
   }
   if (params.search?.trim()) {
     query = query.or(`concept.ilike.%${params.search.trim()}%,notes.ilike.%${params.search.trim()}%`);
@@ -395,7 +773,7 @@ export async function listTransactions(params: {
   query = query.range(offset, offset + limit - 1);
   const { data: rows, error, count } = await query;
   if (error) throw new Error(error.message);
-  const transactions = (rows || []) as CashTransactionRow[];
+  const transactions = (rows || []).map((row) => mapTransactionRow(row as Record<string, unknown>));
   const creatorIds = [...new Set(transactions.map((t) => t.created_by).filter(Boolean))] as string[];
   let profiles: Map<string, string | null> = new Map();
   if (creatorIds.length > 0) {
@@ -418,7 +796,7 @@ export async function listTransactions(params: {
       sessionMap.set(s.id, { date: s.date, status: s.status as CashSessionStatus });
     });
   }
-  const withCreator = transactions.map((t) => {
+  let withCreator = transactions.map((t) => {
     const sess = sessionMap.get(t.cash_session_id);
     return {
       ...t,
@@ -427,6 +805,44 @@ export async function listTransactions(params: {
       session_status: sess?.status,
     };
   }) as CashTransactionWithSession[];
+
+  if (
+    params.cashBook === 'dra' &&
+    (params.fromDate || params.toDate) &&
+    !params.sessionId &&
+    offset === 0 &&
+    (!params.type || params.type === 'internal_transfer')
+  ) {
+    const fromD = params.fromDate || '1970-01-01';
+    const toD = params.toDate || '2099-12-31';
+    const extras = await fetchInternalTransfersAffectingBook(fromD, toD, 'dra');
+    const existingIds = new Set(withCreator.map((x) => x.id));
+    const need = extras.filter((t) => !existingIds.has(t.id) && !t.anulado_at);
+    if (need.length > 0) {
+      const cr = (await attachCreatorNames(need)) as (CashTransactionRow & { created_by_name?: string | null })[];
+      const extraSessionIds = [...new Set(cr.map((t) => t.cash_session_id))];
+      const { data: sessExtra } = await supabaseAdmin
+        .from('cash_sessions')
+        .select('id, date, status')
+        .in('id', extraSessionIds);
+      const sm = new Map(
+        (sessExtra || []).map((s: { id: string; date: string; status: string }) => [
+          s.id,
+          { date: s.date, status: s.status as CashSessionStatus },
+        ])
+      );
+      for (const t of cr) {
+        const sess = sm.get(t.cash_session_id);
+        withCreator.push({
+          ...t,
+          session_date: sess?.date,
+          session_status: sess?.status,
+        } as CashTransactionWithSession);
+      }
+      withCreator.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    }
+  }
+
   return { transactions: withCreator, total: count ?? 0 };
 }
 
@@ -436,24 +852,25 @@ export async function getSessionForClose(sessionId: string): Promise<{
   totalExpense: number;
   balance: number;
 } | null> {
-  const { data: session, error } = await supabaseAdmin
+  const { data: sessionRaw, error } = await supabaseAdmin
     .from('cash_sessions')
     .select('*')
     .eq('id', sessionId)
     .single();
-  if (error || !session) return null;
-  if ((session as CashSessionRow).status !== 'open') return null;
+  if (error || !sessionRaw) return null;
+  const session = mapSessionRow(sessionRaw as Record<string, unknown>);
+  if (session.status !== 'open') return null;
   const { totalIncome, totalExpense } = await getTotalsForSession(sessionId);
   const opening = Number((session as CashSessionRow).opening_amount);
-  const balance = opening + totalIncome - totalExpense;
+  const balance = await computeBookClosing(sessionId);
   const { data: openedProfile } = await supabaseAdmin
     .from('user_profiles')
     .select('full_name')
-    .eq('id', (session as CashSessionRow).opened_by)
+    .eq('id', session.opened_by)
     .single();
   return {
     session: {
-      ...(session as CashSessionRow),
+      ...session,
       opened_by_name: getUserDisplayName(openedProfile as { full_name?: string | null } | null),
       closed_by_name: null,
       total_income: totalIncome,
@@ -466,10 +883,97 @@ export async function getSessionForClose(sessionId: string): Promise<{
   };
 }
 
+const SESSION_TX_AGG_CHUNK = 80;
+const PROFILE_FETCH_CHUNK = 100;
+/** computeBookClosing por sesión en paralelo, en tandas para no saturar el pool. */
+const BOOK_CLOSING_PARALLEL = 8;
+
+async function mapInChunks<T, R>(items: T[], chunkSize: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const chunk = items.slice(i, i + chunkSize);
+    const part = await Promise.all(chunk.map(fn));
+    out.push(...part);
+  }
+  return out;
+}
+
+/**
+ * Agrega movimientos por sesión en pocas consultas (antes: 2N queries).
+ * Alineado con getTotalsForSession (sin anulados; internas no suman a ingreso/egreso).
+ */
+async function fetchTransactionAggregatesForSessions(
+  sessionIds: string[]
+): Promise<Map<string, { totalIncome: number; totalExpense: number; count: number }>> {
+  const map = new Map<string, { totalIncome: number; totalExpense: number; count: number }>();
+  if (sessionIds.length === 0) return map;
+  for (let i = 0; i < sessionIds.length; i += SESSION_TX_AGG_CHUNK) {
+    const chunk = sessionIds.slice(i, i + SESSION_TX_AGG_CHUNK);
+    const { data, error } = await supabaseAdmin
+      .from('cash_transactions')
+      .select('cash_session_id, type, amount')
+      .in('cash_session_id', chunk)
+      .is('anulado_at', null);
+    if (error) throw new Error(error.message);
+    for (const row of data || []) {
+      const sid = String((row as { cash_session_id: string }).cash_session_id);
+      let cur = map.get(sid);
+      if (!cur) {
+        cur = { totalIncome: 0, totalExpense: 0, count: 0 };
+        map.set(sid, cur);
+      }
+      cur.count += 1;
+      const type = String((row as { type: string }).type);
+      if (type === 'internal_transfer') continue;
+      const a = Number((row as { amount: number }).amount);
+      if (type === 'income') cur.totalIncome += a;
+      else if (type === 'expense') cur.totalExpense += a;
+    }
+  }
+  return map;
+}
+
+async function fetchProfilesByUserIds(userIds: string[]): Promise<Map<string, { full_name: string | null }>> {
+  const map = new Map<string, { full_name: string | null }>();
+  const unique = [...new Set(userIds.filter(Boolean))];
+  for (let i = 0; i < unique.length; i += PROFILE_FETCH_CHUNK) {
+    const chunk = unique.slice(i, i + PROFILE_FETCH_CHUNK);
+    const { data, error } = await supabaseAdmin.from('user_profiles').select('id, full_name').in('id', chunk);
+    if (error) throw new Error(error.message);
+    for (const p of data || []) {
+      const row = p as { id: string; full_name: string | null };
+      map.set(row.id, { full_name: row.full_name ?? null });
+    }
+  }
+  return map;
+}
+
+async function enrichSessionsWithTotalsAndProfiles(sessions: CashSessionRow[]): Promise<CashSessionWithDetails[]> {
+  if (sessions.length === 0) return [];
+  const ids = sessions.map((s) => s.id);
+  const userIds = [...new Set(sessions.flatMap((s) => [s.opened_by, s.closed_by].filter(Boolean) as string[]))];
+  const [agg, profiles] = await Promise.all([
+    fetchTransactionAggregatesForSessions(ids),
+    fetchProfilesByUserIds(userIds),
+  ]);
+  return sessions.map((s) => {
+    const a = agg.get(s.id);
+    return {
+      ...s,
+      opened_by_name: getUserDisplayName(profiles.get(s.opened_by) ?? null),
+      closed_by_name: s.closed_by ? getUserDisplayName(profiles.get(s.closed_by) ?? null) : null,
+      total_income: a?.totalIncome ?? 0,
+      total_expense: a?.totalExpense ?? 0,
+      transaction_count: a?.count ?? 0,
+    };
+  });
+}
+
 export async function listSessions(params: {
   fromDate?: string;
   toDate?: string;
   status?: CashSessionStatus;
+  cashBook?: CashBook | 'all';
   limit?: number;
   offset?: number;
 }): Promise<{ sessions: CashSessionWithDetails[]; total: number }> {
@@ -480,63 +984,43 @@ export async function listSessions(params: {
   if (params.fromDate) query = query.gte('date', params.fromDate);
   if (params.toDate) query = query.lte('date', params.toDate);
   if (params.status) query = query.eq('status', params.status);
+  if (params.cashBook && params.cashBook !== 'all') query = query.eq('cash_book', params.cashBook);
   const limit = Math.min(200, params.limit ?? 50);
   const offset = params.offset ?? 0;
   query = query.range(offset, offset + limit - 1);
   const { data: rows, error, count } = await query;
   if (error) throw new Error(error.message);
-  const sessions = (rows || []) as CashSessionRow[];
-  const withDetails: CashSessionWithDetails[] = [];
-  for (const s of sessions) {
-    const { totalIncome, totalExpense } = await getTotalsForSession(s.id);
-    const { data: openedProfile } = await supabaseAdmin
-      .from('user_profiles')
-      .select('full_name')
-      .eq('id', s.opened_by)
-      .single();
-    const { data: closedProfile } = s.closed_by
-      ? await supabaseAdmin.from('user_profiles').select('full_name').eq('id', s.closed_by).single()
-      : { data: null };
-    withDetails.push({
-      ...s,
-      opened_by_name: getUserDisplayName(openedProfile as { full_name?: string | null } | null),
-      closed_by_name: s.closed_by ? getUserDisplayName(closedProfile as { full_name?: string | null } | null) : null,
-      total_income: totalIncome,
-      total_expense: totalExpense,
-      transaction_count: 0,
-    });
-  }
+  const sessions = (rows || []).map((row) => mapSessionRow(row as Record<string, unknown>));
+  const withDetails = await enrichSessionsWithTotalsAndProfiles(sessions);
   return { sessions: withDetails, total: count ?? 0 };
 }
 
 export async function getReportByPeriod(
   startDate: string,
-  endDate: string
+  endDate: string,
+  cashBook: CashBook = 'escuela'
 ): Promise<CashReportPeriod> {
-  const { sessions } = await listSessions({ fromDate: startDate, toDate: endDate, limit: 500 });
+  const { sessions } = await listSessions({ fromDate: startDate, toDate: endDate, limit: 500, cashBook });
   let totalIncome = 0;
   let totalExpense = 0;
   let transactionCount = 0;
+  const balances = await mapInChunks(sessions, BOOK_CLOSING_PARALLEL, (s) => computeBookClosing(s.id));
   const byDay: CashReportPeriod['sessions'] = [];
-  for (const s of sessions) {
+  sessions.forEach((s, idx) => {
     const ti = Number(s.total_income ?? 0);
     const te = Number(s.total_expense ?? 0);
+    const cnt = s.transaction_count ?? 0;
     totalIncome += ti;
     totalExpense += te;
-    const { count } = await supabaseAdmin
-      .from('cash_transactions')
-      .select('id', { count: 'exact', head: true })
-      .eq('cash_session_id', s.id);
-    transactionCount += count ?? 0;
-    const opening = Number(s.opening_amount);
+    transactionCount += cnt;
     byDay.push({
       date: s.date,
       totalIncome: ti,
       totalExpense: te,
-      balance: opening + ti - te,
-      count: count ?? 0,
+      balance: balances[idx],
+      count: cnt,
     });
-  }
+  });
   return {
     startDate,
     endDate,
@@ -572,20 +1056,48 @@ export const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function categoryLabel(t: CashTransactionWithCreator): string {
+  if (t.type === 'internal_transfer') {
+    const from = t.internal_from_book === 'escuela' ? 'Escuela' : 'DRA';
+    const to = t.internal_to_book === 'escuela' ? 'Escuela' : 'DRA';
+    const ch = t.internal_channel === 'efectivo' ? 'efectivo' : 'transferencia';
+    return `Transferencia interna (${from} → ${to}, ${ch})`;
+  }
   if (t.type === 'income') return t.income_type ? (INCOME_TYPE_LABELS[t.income_type] ?? t.income_type) : 'Otros';
   return t.category ? (EXPENSE_CATEGORY_LABELS[t.category] ?? t.category) : 'Otros';
 }
 
+function bookExportTitle(book: CashBook): string {
+  return book === 'dra' ? 'Caja DRA' : 'Caja Escuela';
+}
+
+function balanceExportDescription(book: CashBook): string {
+  return book === 'dra'
+    ? 'Balance (efectivo + transferencias, según libro DRA)'
+    : 'Balance de caja en efectivo (transferencias internas detalladas aparte)';
+}
+
 /** Obtiene todos los datos necesarios para exportar reporte (transacciones + resúmenes). Excluye anulados. */
-export async function getReportDataForExport(startDate: string, endDate: string): Promise<CashReportExportData> {
-  const { transactions, total } = await listTransactions({
+export async function getReportDataForExport(
+  startDate: string,
+  endDate: string,
+  cashBook: CashBook = 'escuela'
+): Promise<CashReportExportData> {
+  const { transactions } = await listTransactions({
     fromDate: startDate,
     toDate: endDate,
+    cashBook,
     limit: 5000,
     offset: 0,
   });
   const active = transactions.filter((t) => !t.anulado_at);
-  const sorted = [...active].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  const operational = active.filter((t) => t.type === 'income' || t.type === 'expense');
+  const internalRaw = await fetchInternalTransfersAffectingBook(startDate, endDate, cashBook);
+  const internalActive = internalRaw.filter((t) => !t.anulado_at);
+  const internalWithNames = await attachCreatorNames(internalActive);
+  const internalTransfers = [...internalWithNames].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  ) as CashTransactionWithCreator[];
+  const sorted = [...operational].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
   let totalIncome = 0;
   let totalExpense = 0;
   let countIncome = 0;
@@ -597,7 +1109,8 @@ export async function getReportDataForExport(startDate: string, endDate: string)
     const amount = Number(t.amount);
     const cat = categoryLabel(t);
     const method = PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method;
-    const methodKey = t.payment_method === 'efectivo' ? 'efectivo' : t.payment_method === 'transferencia' ? 'transferencia' : 'tarjeta';
+    const methodKey =
+      t.payment_method === 'efectivo' ? 'efectivo' : t.payment_method === 'transferencia' ? 'transferencia' : 'tarjeta';
     if (t.type === 'income') {
       totalIncome += amount;
       countIncome += 1;
@@ -612,37 +1125,75 @@ export async function getReportDataForExport(startDate: string, endDate: string)
     curCat.count += 1;
     categoryMap.set(cat, curCat);
     const curMethod = methodMap.get(method) ?? { total: 0, count: 0 };
-    curMethod.total += amount;
+    curMethod.total += t.type === 'income' ? amount : -amount;
     curMethod.count += 1;
     methodMap.set(method, curMethod);
   }
   const byCategory = Array.from(categoryMap.entries()).map(([label, v]) => ({ label, total: v.total, count: v.count }));
   const byPaymentMethod = Array.from(methodMap.entries()).map(([method, v]) => ({ method, total: v.total, count: v.count }));
+
+  const balance =
+    cashBook === 'dra' ? byPaymentNet.efectivo + byPaymentNet.transferencia : byPaymentNet.efectivo;
+
   return {
+    cashBook,
+    bookTitle: bookExportTitle(cashBook),
     startDate,
     endDate,
     totalIncome,
     totalExpense,
-    balance: byPaymentNet.efectivo,
+    balance,
+    balanceDescription: balanceExportDescription(cashBook),
     totalEfectivo: byPaymentNet.efectivo,
     totalTransferencia: byPaymentNet.transferencia,
-    totalTarjeta: byPaymentNet.tarjeta,
-    transactionCount: sorted.length,
+    totalTarjeta: cashBook === 'dra' ? 0 : byPaymentNet.tarjeta,
+    transactionCount: sorted.length + internalTransfers.length,
     countIncome,
     countExpense,
     byCategory: byCategory.sort((a, b) => b.total - a.total),
     byPaymentMethod: byPaymentMethod.sort((a, b) => b.total - a.total),
     transactions: sorted,
+    internalTransfers,
   };
 }
 
+export async function getReportDataForExportCombined(
+  startDate: string,
+  endDate: string
+): Promise<CashReportCombinedExportData> {
+  const [escuela, dra] = await Promise.all([
+    getReportDataForExport(startDate, endDate, 'escuela'),
+    getReportDataForExport(startDate, endDate, 'dra'),
+  ]);
+  const raw = await fetchInternalTransfersInPeriod(startDate, endDate);
+  const active = raw.filter((t) => !t.anulado_at);
+  const uniq = [...new Map(active.map((t) => [t.id, t])).values()];
+  const named = await attachCreatorNames(uniq);
+  const allInternalTransfers = [...named].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  ) as CashTransactionWithCreator[];
+  return { startDate, endDate, escuela, dra, allInternalTransfers };
+}
+
+/** Resumen JSON para pantalla (ambas cajas). */
+export async function getReportCombinedSummary(
+  startDate: string,
+  endDate: string
+): Promise<{ startDate: string; endDate: string; escuela: CashReportPeriod; dra: CashReportPeriod }> {
+  const [escuela, dra] = await Promise.all([
+    getReportByPeriod(startDate, endDate, 'escuela'),
+    getReportByPeriod(startDate, endDate, 'dra'),
+  ]);
+  return { startDate, endDate, escuela, dra };
+}
+
 /** Estadísticas agregadas por mes (últimos N meses) */
-export async function getMonthlyStats(monthsCount: number = 12): Promise<MonthlyStat[]> {
+export async function getMonthlyStats(monthsCount: number = 12, cashBook: CashBook = 'escuela'): Promise<MonthlyStat[]> {
   const end = new Date();
   const start = new Date(end.getFullYear(), end.getMonth() - monthsCount + 1, 1);
   const startStr = start.toISOString().slice(0, 10);
   const endStr = end.toISOString().slice(0, 10);
-  const { sessions } = await listSessions({ fromDate: startStr, toDate: endStr, limit: 500 });
+  const { sessions } = await listSessions({ fromDate: startStr, toDate: endStr, limit: 500, cashBook });
   const byMonth = new Map<string, { totalIncome: number; totalExpense: number; sessionCount: number; transactionCount: number }>();
   for (const s of sessions) {
     const ti = Number(s.total_income ?? 0);
@@ -653,11 +1204,7 @@ export async function getMonthlyStats(monthsCount: number = 12): Promise<Monthly
     cur.totalIncome += ti;
     cur.totalExpense += te;
     cur.sessionCount += 1;
-    const { count } = await supabaseAdmin
-      .from('cash_transactions')
-      .select('id', { count: 'exact', head: true })
-      .eq('cash_session_id', s.id);
-    cur.transactionCount += count ?? 0;
+    cur.transactionCount += s.transaction_count ?? 0;
     byMonth.set(key, cur);
   }
   const result: MonthlyStat[] = [];
@@ -681,58 +1228,85 @@ export async function getMonthlyStats(monthsCount: number = 12): Promise<Monthly
   return result;
 }
 
-/** Alertas de caja: balance negativo, caja de ayer no cerrada, etc. */
+/** Alertas de caja: balance negativo, caja de ayer no cerrada, etc. (ambos libros). */
 export async function getCashAlerts(): Promise<CashAlert[]> {
   const alerts: CashAlert[] = [];
   const today = new Date().toISOString().slice(0, 10);
   const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  const thirtyOneDaysAgo = new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10);
+  const books: CashBook[] = ['escuela', 'dra'];
 
-  const todaySession = await getSessionByDate(today);
-  if (!todaySession) {
-    alerts.push({
-      type: 'no_caja_today',
-      severity: 'info',
-      message: 'No hay caja abierta para hoy. Abre la caja para registrar movimientos.',
-    });
-  } else if (todaySession.status === 'open') {
-    const { totalIncome, totalExpense } = await getTotalsForSession(todaySession.id);
-    const opening = Number(todaySession.opening_amount);
-    const balance = opening + totalIncome - totalExpense;
-    if (balance < 0) {
+  const [sTodayEsc, sTodayDra, sYesEsc, sYesDra] = await Promise.all([
+    getSessionByDate(today, 'escuela'),
+    getSessionByDate(today, 'dra'),
+    getSessionByDate(yesterday, 'escuela'),
+    getSessionByDate(yesterday, 'dra'),
+  ]);
+  const todayByBook: Record<CashBook, Awaited<ReturnType<typeof getSessionByDate>>> = {
+    escuela: sTodayEsc,
+    dra: sTodayDra,
+  };
+  const yestByBook: Record<CashBook, Awaited<ReturnType<typeof getSessionByDate>>> = {
+    escuela: sYesEsc,
+    dra: sYesDra,
+  };
+
+  const balanceChecks: Promise<void>[] = [];
+  for (const book of books) {
+    const todaySession = todayByBook[book];
+    if (!todaySession) {
       alerts.push({
-        type: 'negative_balance',
-        severity: 'error',
-        message: `La caja de hoy tiene balance negativo. Revisa ingresos y egresos.`,
-        date: today,
-        sessionId: todaySession.id,
+        type: 'no_caja_today',
+        severity: 'info',
+        message: `No hay caja abierta (${book}) para hoy.`,
+      });
+    } else if (todaySession.status === 'open') {
+      const sid = todaySession.id;
+      balanceChecks.push(
+        (async () => {
+          const balance = await computeBookClosing(sid);
+          if (balance < 0) {
+            alerts.push({
+              type: 'negative_balance',
+              severity: 'error',
+              message: `La caja ${book} de hoy tiene balance negativo.`,
+              date: today,
+              sessionId: sid,
+            });
+          }
+        })()
+      );
+    }
+
+    const yesterdaySession = yestByBook[book];
+    if (yesterdaySession && yesterdaySession.status === 'open') {
+      alerts.push({
+        type: 'yesterday_not_closed',
+        severity: 'warning',
+        message: `La caja ${book} del ${yesterday} no fue cerrada.`,
+        date: yesterday,
+        sessionId: yesterdaySession.id,
       });
     }
   }
 
-  const yesterdaySession = await getSessionByDate(yesterday);
-  if (yesterdaySession && yesterdaySession.status === 'open') {
-    alerts.push({
-      type: 'yesterday_not_closed',
-      severity: 'warning',
-      message: 'La caja de ayer no fue cerrada. Se recomienda cerrarla para mantener el control.',
-      date: yesterday,
-      sessionId: yesterdaySession.id,
-    });
-  }
+  await Promise.all(balanceChecks);
 
-  const { sessions: closedSessions } = await listSessions({
-    fromDate: new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10),
-    toDate: today,
-    status: 'closed',
-    limit: 31,
-  });
-  for (const s of closedSessions) {
-    const closing = Number(s.closing_amount);
-    if (closing != null && closing < 0) {
+  const { data: negClosed, error: negErr } = await supabaseAdmin
+    .from('cash_sessions')
+    .select('id, date, cash_book, closing_amount')
+    .eq('status', 'closed')
+    .gte('date', thirtyOneDaysAgo)
+    .lte('date', today)
+    .lt('closing_amount', 0)
+    .limit(100);
+  if (!negErr && negClosed) {
+    for (const row of negClosed) {
+      const s = row as { id: string; date: string; cash_book: string };
       alerts.push({
         type: 'session_negative_balance',
         severity: 'warning',
-        message: `Sesión del ${s.date} cerró con balance negativo.`,
+        message: `Sesión ${s.cash_book} del ${s.date} cerró con balance negativo.`,
         date: s.date,
         sessionId: s.id,
       });
@@ -743,15 +1317,42 @@ export async function getCashAlerts(): Promise<CashAlert[]> {
 }
 
 /** Dashboard financiero: resumen del día, últimos 7 días, estadísticas mensuales y alertas */
-export async function getFinancialDashboard(): Promise<FinancialDashboard> {
-  const summary = await getTodaySummary();
+export async function getFinancialDashboard(view: CashBook | 'all' = 'escuela'): Promise<FinancialDashboard> {
   const today = new Date().toISOString().slice(0, 10);
   const sevenDaysAgo = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
-  const report = await getReportByPeriod(sevenDaysAgo, today);
-  const monthlyStats = await getMonthlyStats(12);
-  const alerts = await getCashAlerts();
+
+  if (view === 'all') {
+    const [alerts, summary, summaryDra, report, reportDra, monthlyStats, monthlyStatsDra] = await Promise.all([
+      getCashAlerts(),
+      getTodaySummary('escuela'),
+      getTodaySummary('dra'),
+      getReportByPeriod(sevenDaysAgo, today, 'escuela'),
+      getReportByPeriod(sevenDaysAgo, today, 'dra'),
+      getMonthlyStats(12, 'escuela'),
+      getMonthlyStats(12, 'dra'),
+    ]);
+    return {
+      view: 'all',
+      summary,
+      summaryDra,
+      last7Days: report.sessions,
+      last7DaysDra: reportDra.sessions,
+      monthlyStats,
+      monthlyStatsDra,
+      alerts,
+    };
+  }
+
+  const [alerts, summary, report, monthlyStats] = await Promise.all([
+    getCashAlerts(),
+    getTodaySummary(view),
+    getReportByPeriod(sevenDaysAgo, today, view),
+    getMonthlyStats(12, view),
+  ]);
   return {
+    view,
     summary,
+    summaryDra: null,
     last7Days: report.sessions,
     monthlyStats,
     alerts,
@@ -798,13 +1399,14 @@ export async function getTransactionWithSession(
     .eq('id', transactionId)
     .single();
   if (txErr || !tx) return null;
-  const { data: session, error: sessErr } = await supabaseAdmin
+  const transaction = mapTransactionRow(tx as Record<string, unknown>);
+  const { data: sessionRaw, error: sessErr } = await supabaseAdmin
     .from('cash_sessions')
     .select('*')
-    .eq('id', (tx as CashTransactionRow).cash_session_id)
+    .eq('id', transaction.cash_session_id)
     .single();
-  if (sessErr || !session) return null;
-  return { transaction: tx as CashTransactionRow, session: session as CashSessionRow };
+  if (sessErr || !sessionRaw) return null;
+  return { transaction, session: mapSessionRow(sessionRaw as Record<string, unknown>) };
 }
 
 /** Registra un evento en la auditoría de caja. */
@@ -840,6 +1442,7 @@ export async function updateTransaction(
     income_type?: string | null;
     amount?: number;
     payment_method?: PaymentMethod;
+    funds_destination?: FundsDestination | null;
     notes?: string | null;
   },
   userId: string,
@@ -860,12 +1463,17 @@ export async function updateTransaction(
     }
   }
 
+  if (transaction.type === 'internal_transfer') {
+    throw new Error('Las transferencias internas no se editan desde este flujo; anule y registre de nuevo si aplica.');
+  }
+
   const dataBefore = {
     concept: transaction.concept,
     category: transaction.category,
     income_type: transaction.income_type,
     amount: transaction.amount,
     payment_method: transaction.payment_method,
+    funds_destination: transaction.funds_destination,
     notes: transaction.notes,
   };
   const updates: Record<string, unknown> = {};
@@ -876,7 +1484,18 @@ export async function updateTransaction(
     if (payload.amount <= 0) throw new Error('El monto debe ser mayor a 0');
     updates.amount = payload.amount;
   }
-  if (payload.payment_method !== undefined) updates.payment_method = payload.payment_method;
+  if (payload.payment_method !== undefined) {
+    updates.payment_method = payload.payment_method;
+    const dest = validateFundsDestination(
+      payload.payment_method,
+      session.cash_book,
+      payload.funds_destination !== undefined ? payload.funds_destination : transaction.funds_destination
+    );
+    updates.funds_destination = dest;
+  } else if (payload.funds_destination !== undefined) {
+    const pm = transaction.payment_method;
+    updates.funds_destination = validateFundsDestination(pm, session.cash_book, payload.funds_destination);
+  }
   if (payload.notes !== undefined) updates.notes = payload.notes;
 
   if (Object.keys(updates).length === 0) return transaction;
@@ -900,7 +1519,7 @@ export async function updateTransaction(
     adminCodeUsed: !allowedWithoutCode,
   });
 
-  return updated as CashTransactionRow;
+  return mapTransactionRow(updated as Record<string, unknown>);
 }
 
 /** Anula un movimiento (soft delete). Si la sesión está cerrada o es de otro día, requiere adminCode y reason. */
@@ -955,13 +1574,13 @@ export async function anulateTransaction(
     adminCodeUsed: !allowedWithoutCode,
   });
 
-  return updated as CashTransactionRow;
+  return mapTransactionRow(updated as Record<string, unknown>);
 }
 
 /** Genera un buffer Excel del reporte de caja para el período dado */
-export async function buildCashReportExcel(startDate: string, endDate: string): Promise<Buffer> {
+export async function buildCashReportExcel(startDate: string, endDate: string, cashBook: CashBook = 'escuela'): Promise<Buffer> {
   const ExcelJS = (await import('exceljs')).default;
-  const report = await getReportByPeriod(startDate, endDate);
+  const report = await getReportByPeriod(startDate, endDate, cashBook);
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Reporte Caja', { views: [{ state: 'frozen', ySplit: 2 }] });
   sheet.columns = [
@@ -996,6 +1615,233 @@ function formatDateForExport(iso: string): string {
   return d.toLocaleString('es-EC', { timeZone: 'America/Guayaquil', dateStyle: 'short', timeStyle: 'medium' });
 }
 
+/** Clasifica el tipo de reporte según la etiqueta enviada desde el front (Diario / Semanal / Mensual). */
+type ReportCadence = 'diario' | 'semanal' | 'mensual';
+
+function reportCadenceFromLabel(reportType: string): ReportCadence {
+  const t = (reportType || '').trim().toLowerCase();
+  if (t.includes('semanal')) return 'semanal';
+  if (t.includes('mensual')) return 'mensual';
+  return 'diario';
+}
+
+/** Fecha calendario (YYYY-MM-DD) en zona Guayaquil, para agrupar movimientos por día. */
+function ymdInGuayaquil(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Guayaquil' });
+}
+
+function addDaysYmdUtc(ymd: string, delta: number): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + delta));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
+function enumerateDatesInclusive(start: string, end: string): string[] {
+  const out: string[] = [];
+  let cur = start;
+  let guard = 0;
+  while (cur <= end && guard++ < 400) {
+    out.push(cur);
+    cur = addDaysYmdUtc(cur, 1);
+  }
+  return out;
+}
+
+interface DayOperationalAgg {
+  date: string;
+  totalIncome: number;
+  totalExpense: number;
+  net: number;
+  count: number;
+}
+
+/** Ingresos/egresos operativos por día (excluye internas). Opcionalmente rellena días sin movimientos en el rango. */
+function aggregateOperationalByDay(
+  transactions: CashTransactionWithCreator[],
+  startDate: string,
+  endDate: string,
+  fillAllDaysInRange: boolean
+): DayOperationalAgg[] {
+  const map = new Map<string, { income: number; expense: number; count: number }>();
+  for (const t of transactions) {
+    if (t.type !== 'income' && t.type !== 'expense') continue;
+    const dk = ymdInGuayaquil(t.created_at);
+    if (dk < startDate || dk > endDate) continue;
+    const cur = map.get(dk) ?? { income: 0, expense: 0, count: 0 };
+    const amt = Number(t.amount);
+    if (t.type === 'income') cur.income += amt;
+    else cur.expense += amt;
+    cur.count += 1;
+    map.set(dk, cur);
+  }
+  const dates = fillAllDaysInRange
+    ? enumerateDatesInclusive(startDate, endDate)
+    : [...map.keys()].sort((a, b) => a.localeCompare(b));
+  return dates.map((date) => {
+    const c = map.get(date) ?? { income: 0, expense: 0, count: 0 };
+    return {
+      date,
+      totalIncome: c.income,
+      totalExpense: c.expense,
+      net: c.income - c.expense,
+      count: c.count,
+    };
+  });
+}
+
+/** Lunes de la semana ISO civil (YYYY-MM-DD en UTC date math). */
+function mondayKeyFromYmd(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const utcMid = Date.UTC(y, m - 1, d);
+  const dow = new Date(utcMid).getUTCDay();
+  const diff = dow === 0 ? -6 : 1 - dow;
+  const mon = new Date(utcMid + diff * 86400000);
+  return `${mon.getUTCFullYear()}-${String(mon.getUTCMonth() + 1).padStart(2, '0')}-${String(mon.getUTCDate()).padStart(2, '0')}`;
+}
+
+function formatYmdEs(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.toLocaleDateString('es-EC', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+interface WeekCombinedAgg {
+  weekStart: string;
+  weekEnd: string;
+  label: string;
+  escuelaIncome: number;
+  escuelaExpense: number;
+  draIncome: number;
+  draExpense: number;
+  count: number;
+}
+
+interface CombinedDailyRow {
+  date: string;
+  escuelaIncome: number;
+  escuelaExpense: number;
+  draIncome: number;
+  draExpense: number;
+  count: number;
+}
+
+/** Tabla diaria Escuela + DRA alineada por fecha (rellena días sin movimientos si fillDays). */
+function buildCombinedDailyTable(data: CashReportCombinedExportData, fillDays: boolean): CombinedDailyRow[] {
+  const e = aggregateOperationalByDay(data.escuela.transactions, data.startDate, data.endDate, fillDays);
+  const d = aggregateOperationalByDay(data.dra.transactions, data.startDate, data.endDate, fillDays);
+  const mapE = new Map(e.map((r) => [r.date, r]));
+  const mapD = new Map(d.map((r) => [r.date, r]));
+  const dates = fillDays
+    ? enumerateDatesInclusive(data.startDate, data.endDate)
+    : [...new Set([...mapE.keys(), ...mapD.keys()])].sort((a, b) => a.localeCompare(b));
+  return dates.map((date) => {
+    const er = mapE.get(date);
+    const dr = mapD.get(date);
+    return {
+      date,
+      escuelaIncome: er?.totalIncome ?? 0,
+      escuelaExpense: er?.totalExpense ?? 0,
+      draIncome: dr?.totalIncome ?? 0,
+      draExpense: dr?.totalExpense ?? 0,
+      count: (er?.count ?? 0) + (dr?.count ?? 0),
+    };
+  });
+}
+
+function rollupCombinedDailyToWeeks(daily: CombinedDailyRow[]): WeekCombinedAgg[] {
+  const weekMap = new Map<
+    string,
+    {
+      minD: string;
+      maxD: string;
+      escuelaIncome: number;
+      escuelaExpense: number;
+      draIncome: number;
+      draExpense: number;
+      count: number;
+    }
+  >();
+  for (const row of daily) {
+    const wk = mondayKeyFromYmd(row.date);
+    const cur = weekMap.get(wk) ?? {
+      minD: row.date,
+      maxD: row.date,
+      escuelaIncome: 0,
+      escuelaExpense: 0,
+      draIncome: 0,
+      draExpense: 0,
+      count: 0,
+    };
+    if (row.date < cur.minD) cur.minD = row.date;
+    if (row.date > cur.maxD) cur.maxD = row.date;
+    cur.escuelaIncome += row.escuelaIncome;
+    cur.escuelaExpense += row.escuelaExpense;
+    cur.draIncome += row.draIncome;
+    cur.draExpense += row.draExpense;
+    cur.count += row.count;
+    weekMap.set(wk, cur);
+  }
+  return [...weekMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, v]) => ({
+      weekStart: mondayKeyFromYmd(v.minD),
+      weekEnd: v.maxD,
+      label: `${formatYmdEs(v.minD)} — ${formatYmdEs(v.maxD)}`,
+      escuelaIncome: v.escuelaIncome,
+      escuelaExpense: v.escuelaExpense,
+      draIncome: v.draIncome,
+      draExpense: v.draExpense,
+      count: v.count,
+    }));
+}
+
+/** Una sola caja: agregado semanal a partir de filas diarias. */
+function rollupSingleBookDailyToWeeks(daily: DayOperationalAgg[]): {
+  label: string;
+  totalIncome: number;
+  totalExpense: number;
+  net: number;
+  count: number;
+}[] {
+  const weekMap = new Map<
+    string,
+    { minD: string; maxD: string; income: number; expense: number; count: number }
+  >();
+  for (const row of daily) {
+    const wk = mondayKeyFromYmd(row.date);
+    const cur = weekMap.get(wk) ?? {
+      minD: row.date,
+      maxD: row.date,
+      income: 0,
+      expense: 0,
+      count: 0,
+    };
+    if (row.date < cur.minD) cur.minD = row.date;
+    if (row.date > cur.maxD) cur.maxD = row.date;
+    cur.income += row.totalIncome;
+    cur.expense += row.totalExpense;
+    cur.count += row.count;
+    weekMap.set(wk, cur);
+  }
+  return [...weekMap.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, v]) => ({
+      label: `${formatYmdEs(v.minD)} — ${formatYmdEs(v.maxD)}`,
+      totalIncome: v.income,
+      totalExpense: v.expense,
+      net: v.income - v.expense,
+      count: v.count,
+    }));
+}
+
+const moneyFmtExcel = '"$"#,##0.00';
+
 /** Excel detallado multi-hoja para reporte de caja */
 export async function buildCashReportExcelFull(
   data: CashReportExportData,
@@ -1017,30 +1863,87 @@ export async function buildCashReportExcelFull(
   summarySheet.addRow(['REPORTE DE CAJA', '']).font = { bold: true, size: 14 };
   summarySheet.addRow(['Escuela', SCHOOL_NAME]);
   summarySheet.addRow(['Módulo', 'Caja']);
+  summarySheet.addRow(['Libro', data.bookTitle]);
   summarySheet.addRow(['Tipo de reporte', reportType]);
   summarySheet.addRow(['Rango de fechas', `${data.startDate} - ${data.endDate}`]);
   summarySheet.addRow(['Fecha y hora de generación', generatedAt]);
   summarySheet.addRow(['Usuario que generó el reporte', generatedBy]);
   summarySheet.addRow([]);
 
-  summarySheet.addRow(['RESUMEN EJECUTIVO', '']).font = { bold: true };
-  summarySheet.addRow(['Total movimientos', data.transactionCount]);
-  summarySheet.addRow(['Total ingresos', data.totalIncome]);
-  summarySheet.addRow(['Total egresos', data.totalExpense]);
-  const balanceRow = summarySheet.addRow(['Balance neto', data.balance]);
+  const resumenEjecutivoRow = summarySheet.addRow(['RESUMEN EJECUTIVO', '']);
+  resumenEjecutivoRow.font = { bold: true };
+
+  const totalMovRow = summarySheet.addRow(['Total movimientos', data.transactionCount]);
+  const totalIngresosRow = summarySheet.addRow(['Total ingresos', data.totalIncome]);
+  const totalEgresosRow = summarySheet.addRow(['Total egresos', data.totalExpense]);
+
+  const totalEfectivoRow = summarySheet.addRow(['TOTAL EN EFECTIVO', data.totalEfectivo ?? 0]);
+  const totalTransferenciasRow = summarySheet.addRow(['TOTAL TRANSFERENCIAS', data.totalTransferencia ?? 0]);
+  const totalTarjetaRow = summarySheet.addRow(['TOTAL TARJETA', data.totalTarjeta ?? 0]);
+
+  const balanceRow = summarySheet.addRow([data.balanceDescription, data.balance]);
 
   summarySheet.getRow(1).font = { bold: true, size: 14 };
-  summarySheet.getRow(10).font = { bold: true };
-  summarySheet.getRow(12).getCell(2).numFmt = '#,##0';
-  summarySheet.getRow(13).getCell(2).numFmt = '"$"#,##0.00';
-  summarySheet.getRow(14).getCell(2).numFmt = '"$"#,##0.00';
-  summarySheet.getRow(15).getCell(2).numFmt = '"$"#,##0.00';
+
+  totalMovRow.getCell(2).numFmt = '#,##0';
+  [totalIngresosRow, totalEgresosRow, totalEfectivoRow, totalTransferenciasRow, totalTarjetaRow, balanceRow].forEach((r) => {
+    r.getCell(2).numFmt = '"$"#,##0.00';
+  });
 
   const balanceCell = balanceRow.getCell(2);
-  balanceCell.numFmt = '"$"#,##0.00';
   balanceCell.font = { bold: true, size: 12 };
   balanceCell.fill = data.balance >= 0 ? greenFill : redFill;
   balanceRow.height = 24;
+
+  const cadenceFull = reportCadenceFromLabel(reportType);
+  if (cadenceFull === 'semanal') {
+    const daily = aggregateOperationalByDay(data.transactions, data.startDate, data.endDate, true);
+    const corte = workbook.addWorksheet('Por día (totales)', { views: [{ state: 'frozen', ySplit: 1 }] });
+    corte.addRow(['Fecha', 'Ingresos', 'Egresos', 'Neto del día', 'Movimientos']);
+    corte.getRow(1).font = { bold: true };
+    let si = 0,
+      se = 0,
+      sc = 0;
+    for (const r of daily) {
+      const row = corte.addRow([r.date, r.totalIncome, r.totalExpense, r.net, r.count]);
+      row.getCell(2).numFmt = moneyFmtExcel;
+      row.getCell(3).numFmt = moneyFmtExcel;
+      row.getCell(4).numFmt = moneyFmtExcel;
+      si += r.totalIncome;
+      se += r.totalExpense;
+      sc += r.count;
+    }
+    const trow = corte.addRow(['TOTAL SEMANA', si, se, si - se, sc]);
+    trow.font = { bold: true };
+    trow.getCell(2).numFmt = moneyFmtExcel;
+    trow.getCell(3).numFmt = moneyFmtExcel;
+    trow.getCell(4).numFmt = moneyFmtExcel;
+  }
+  if (cadenceFull === 'mensual') {
+    const daily = aggregateOperationalByDay(data.transactions, data.startDate, data.endDate, true);
+    const weeks = rollupSingleBookDailyToWeeks(daily);
+    const corte = workbook.addWorksheet('Por semana (totales)', { views: [{ state: 'frozen', ySplit: 1 }] });
+    corte.addRow(['Semana (lun–dom)', 'Ingresos', 'Egresos', 'Neto', 'Movimientos']);
+    corte.getRow(1).font = { bold: true };
+    let si = 0,
+      se = 0,
+      sc = 0;
+    for (const w of weeks) {
+      const row = corte.addRow([w.label, w.totalIncome, w.totalExpense, w.net, w.count]);
+      row.getCell(2).numFmt = moneyFmtExcel;
+      row.getCell(3).numFmt = moneyFmtExcel;
+      row.getCell(4).numFmt = moneyFmtExcel;
+      si += w.totalIncome;
+      se += w.totalExpense;
+      sc += w.count;
+    }
+    const trow = corte.addRow(['TOTAL MES', si, se, si - se, sc]);
+    trow.font = { bold: true };
+    trow.getCell(2).numFmt = moneyFmtExcel;
+    trow.getCell(3).numFmt = moneyFmtExcel;
+    trow.getCell(4).numFmt = moneyFmtExcel;
+    corte.getColumn(1).width = 36;
+  }
 
   // ─── Hoja 2: Movimientos ─────────────────────────────────────────────────
   const movSheet = workbook.addWorksheet('Movimientos', { views: [{ state: 'frozen', ySplit: 1 }] });
@@ -1078,11 +1981,41 @@ export async function buildCashReportExcelFull(
     else amountCell.font = { color: { argb: 'FFDC2626' } };
   }
 
+  if (data.internalTransfers.length > 0) {
+    movSheet.addRow([]);
+    const sep = movSheet.addRow({
+      date: '—',
+      type: 'Transferencias internas',
+      concept: '(No suman a ingresos/egresos operativos; ajuste de balance entre libros)',
+      category: '',
+      payment: '',
+      amount: '',
+      user: '',
+      notes: '',
+    });
+    sep.getCell(1).font = { bold: true };
+    sep.getCell(3).font = { italic: true, size: 9 };
+    for (const t of data.internalTransfers) {
+      const row = movSheet.addRow({
+        date: formatDateForExport(t.created_at),
+        type: 'Transf. interna',
+        concept: t.concept,
+        category: categoryLabel(t),
+        payment: PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+        amount: Number(t.amount),
+        user: t.created_by_name ?? '',
+        notes: t.notes ?? '',
+      });
+      row.getCell(6).numFmt = '"$"#,##0.00';
+      row.getCell(6).font = { color: { argb: 'FF64748B' } };
+    }
+  }
+
   movSheet.getColumn(6).numFmt = '"$"#,##0.00';
 
   // Fila totales finales
   movSheet.addRow([]);
-  const totalIngresosRow = movSheet.addRow({
+  const totalIngresosMovRow = movSheet.addRow({
     date: 'TOTAL INGRESOS:',
     type: '',
     concept: '',
@@ -1092,10 +2025,10 @@ export async function buildCashReportExcelFull(
     user: '',
     notes: '',
   });
-  totalIngresosRow.getCell(1).font = { bold: true };
-  totalIngresosRow.getCell(6).numFmt = '"$"#,##0.00';
-  totalIngresosRow.getCell(6).font = { bold: true, color: { argb: 'FF059669' } };
-  const totalEgresosRow = movSheet.addRow({
+  totalIngresosMovRow.getCell(1).font = { bold: true };
+  totalIngresosMovRow.getCell(6).numFmt = '"$"#,##0.00';
+  totalIngresosMovRow.getCell(6).font = { bold: true, color: { argb: 'FF059669' } };
+  const totalEgresosMovRow = movSheet.addRow({
     date: 'TOTAL EGRESOS:',
     type: '',
     concept: '',
@@ -1105,11 +2038,54 @@ export async function buildCashReportExcelFull(
     user: '',
     notes: '',
   });
-  totalEgresosRow.getCell(1).font = { bold: true };
-  totalEgresosRow.getCell(6).numFmt = '"$"#,##0.00';
-  totalEgresosRow.getCell(6).font = { bold: true, color: { argb: 'FFDC2626' } };
+  totalEgresosMovRow.getCell(1).font = { bold: true };
+  totalEgresosMovRow.getCell(6).numFmt = '"$"#,##0.00';
+  totalEgresosMovRow.getCell(6).font = { bold: true, color: { argb: 'FFDC2626' } };
+
+  const totalEfectivoMovRow = movSheet.addRow({
+    date: 'TOTAL EN EFECTIVO:',
+    type: '',
+    concept: '',
+    category: '',
+    payment: '',
+    amount: data.totalEfectivo ?? 0,
+    user: '',
+    notes: '',
+  });
+  totalEfectivoMovRow.getCell(1).font = { bold: true };
+  totalEfectivoMovRow.getCell(6).numFmt = '"$"#,##0.00';
+  totalEfectivoMovRow.getCell(6).font = { bold: true };
+
+  const totalTransferenciasMovRow = movSheet.addRow({
+    date: 'TOTAL TRANSFERENCIAS:',
+    type: '',
+    concept: '',
+    category: '',
+    payment: '',
+    amount: data.totalTransferencia ?? 0,
+    user: '',
+    notes: '',
+  });
+  totalTransferenciasMovRow.getCell(1).font = { bold: true };
+  totalTransferenciasMovRow.getCell(6).numFmt = '"$"#,##0.00';
+  totalTransferenciasMovRow.getCell(6).font = { bold: true };
+
+  const totalTarjetaMovRow = movSheet.addRow({
+    date: 'TOTAL TARJETA:',
+    type: '',
+    concept: '',
+    category: '',
+    payment: '',
+    amount: data.totalTarjeta ?? 0,
+    user: '',
+    notes: '',
+  });
+  totalTarjetaMovRow.getCell(1).font = { bold: true };
+  totalTarjetaMovRow.getCell(6).numFmt = '"$"#,##0.00';
+  totalTarjetaMovRow.getCell(6).font = { bold: true };
+
   const balanceFinalRow = movSheet.addRow({
-    date: 'BALANCE FINAL DE CAJA:',
+    date: data.balanceDescription.toUpperCase() + ':',
     type: '',
     concept: '',
     category: '',
@@ -1177,6 +2153,8 @@ export async function buildCashReportPdf(
   doc.fontSize(22).font('Helvetica-Bold').fillColor(headerBg).text('REPORTE DE CAJA', { align: 'center' });
   doc.moveDown(0.3);
   doc.fontSize(12).font('Helvetica').fillColor(secondary).text(SCHOOL_NAME, { align: 'center' });
+  doc.moveDown(0.35);
+  doc.fontSize(10).fillColor(primary).text(`Libro: ${data.bookTitle}`, { align: 'center' });
   doc.moveDown(0.5);
   doc.fontSize(10).fillColor(primary).text(`Tipo: ${reportType}  ·  Rango: ${data.startDate} a ${data.endDate}`, { align: 'center' });
   doc.text(`Generado: ${generatedAt}  ·  Por: ${generatedBy}`, { align: 'center' });
@@ -1196,7 +2174,7 @@ export async function buildCashReportPdf(
     { label: 'TOTAL EN EFECTIVO', value: `$ ${(data.totalEfectivo ?? 0).toFixed(2)}`, color: primary },
     { label: 'TOTAL TRANSFERENCIAS', value: `$ ${(data.totalTransferencia ?? 0).toFixed(2)}`, color: primary },
     { label: 'TOTAL TARJETA', value: `$ ${(data.totalTarjeta ?? 0).toFixed(2)}`, color: primary },
-    { label: 'Balance de caja (solo efectivo)', value: `$ ${data.balance.toFixed(2)}`, color: accent },
+    { label: data.balanceDescription, value: `$ ${data.balance.toFixed(2)}`, color: accent },
     { label: 'Cant. ingresos / egresos', value: `${data.countIncome} / ${data.countExpense}`, color: secondary },
   ];
   const summaryBoxH = summaryLines.length * lineH + 24;
@@ -1211,6 +2189,88 @@ export async function buildCashReportPdf(
   });
   doc.y = summaryY0 + summaryBoxH + 14;
   doc.fillColor(primary);
+
+  const cadencePdf1 = reportCadenceFromLabel(reportType);
+  if (cadencePdf1 === 'semanal' || cadencePdf1 === 'mensual') {
+    const corteYMax = pageH - 88;
+    const srh = 16;
+    const scw = [100, 78, 78, 78, 36];
+    const stw = scw.reduce((a, b) => a + b, 0);
+    const stx = margin + (contentW - stw) / 2;
+    const daily1 = aggregateOperationalByDay(data.transactions, data.startDate, data.endDate, true);
+    let si = 0,
+      se = 0,
+      sc = 0;
+    for (const r of daily1) {
+      si += r.totalIncome;
+      se += r.totalExpense;
+      sc += r.count;
+    }
+    const rows1: { cells: string[] }[] =
+      cadencePdf1 === 'semanal'
+        ? daily1.map((r) => ({
+            cells: [r.date, r.totalIncome.toFixed(2), r.totalExpense.toFixed(2), r.net.toFixed(2), String(r.count)],
+          }))
+        : rollupSingleBookDailyToWeeks(daily1).map((w) => ({
+            cells: [w.label, w.totalIncome.toFixed(2), w.totalExpense.toFixed(2), w.net.toFixed(2), String(w.count)],
+          }));
+    const hdr1 = cadencePdf1 === 'semanal' ? ['Fecha', 'Ingresos', 'Egresos', 'Neto día', 'Movs.'] : ['Semana', 'Ingresos', 'Egresos', 'Neto', 'Movs.'];
+    const drawHdr1 = (yy: number) => {
+      let sx = stx;
+      hdr1.forEach((h, i) => {
+        doc.rect(sx, yy, scw[i], srh).fill(rowHeader).stroke();
+        doc.font('Helvetica-Bold').fontSize(7).fillColor(primary).text(h, sx + 4, yy + 5, { width: scw[i] - 8 });
+        sx += scw[i];
+      });
+      return yy + srh;
+    };
+    if (doc.y + 36 > corteYMax) {
+      (doc as { addPage: (o: object) => void }).addPage(PDF_PAGE_OPTIONS);
+      doc.y = margin + 18;
+    }
+    sectionTitle(cadencePdf1 === 'semanal' ? 'Corte por día (totales semana)' : 'Corte por semana (totales mes)');
+    let sy = drawHdr1(doc.y);
+    doc.font('Helvetica').fontSize(7).fillColor(primary);
+    rows1.forEach((row, idx) => {
+      if (sy + srh > corteYMax) {
+        (doc as { addPage: (o: object) => void }).addPage(PDF_PAGE_OPTIONS);
+        sy = margin + 18;
+        sy = drawHdr1(sy);
+        doc.font('Helvetica').fontSize(7).fillColor(primary);
+      }
+      if (idx % 2 === 1) doc.rect(stx, sy, stw, srh).fill(rowAlt);
+      let sx = stx;
+      row.cells.forEach((cell, i) => {
+        doc.rect(sx, sy, scw[i], srh).stroke();
+        doc.fillColor(primary).text(cell, sx + 4, sy + 5, { width: scw[i] - 8, align: i >= 1 && i <= 3 ? 'right' : 'left' });
+        sx += scw[i];
+      });
+      sy += srh;
+    });
+    if (sy + srh > corteYMax) {
+      (doc as { addPage: (o: object) => void }).addPage(PDF_PAGE_OPTIONS);
+      sy = margin + 18;
+    }
+    const tot1 = [
+      cadencePdf1 === 'semanal' ? 'TOTAL SEMANA' : 'TOTAL MES',
+      si.toFixed(2),
+      se.toFixed(2),
+      (si - se).toFixed(2),
+      String(sc),
+    ];
+    let sx = stx;
+    tot1.forEach((cell, i) => {
+      doc.rect(sx, sy, scw[i], srh).fill(rowHeader).stroke();
+      doc.font('Helvetica-Bold').fontSize(7).fillColor(primary).text(cell, sx + 4, sy + 5, {
+        width: scw[i] - 8,
+        align: i >= 1 && i <= 3 ? 'right' : 'left',
+      });
+      sx += scw[i];
+    });
+    sy += srh;
+    doc.y = sy + 12;
+    doc.fillColor(primary);
+  }
 
   sectionTitle('Detalle de movimientos');
   const tableTop = doc.y;
@@ -1276,6 +2336,64 @@ export async function buildCashReportPdf(
     y += cellHeight;
   });
 
+  if (data.internalTransfers.length > 0) {
+    doc.y = y + 14;
+    if (doc.y > tableBreakY - 80) {
+      (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
+      doc.y = margin + 18;
+      y = doc.y;
+    }
+    sectionTitle('Transferencias internas (detalle; no son ingreso/egreso operativo)');
+    doc.font('Helvetica').fontSize(8).fillColor(secondary).text(
+      'Movimientos entre caja Escuela y DRA que ajustan balance pero no figuran como egreso operativo.',
+      margin,
+      doc.y,
+      { width: contentW }
+    );
+    doc.moveDown(0.6);
+    y = doc.y;
+    data.internalTransfers.forEach((t, rowIndex) => {
+      x = tableX;
+      const amountStr = '$ ' + Number(t.amount).toFixed(2);
+      const row: string[] = [
+        formatDateForExport(t.created_at),
+        'Transf. interna',
+        t.concept ?? '',
+        categoryLabel(t),
+        PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+        amountStr,
+        t.created_by_name ?? '',
+        t.notes ?? '',
+      ];
+      let cellHeight = rowH;
+      for (let i = 0; i < row.length; i++) {
+        const w = colW[i] - 8;
+        const h = (doc as unknown as { heightOfString: (text: string, opts?: { width?: number }) => number }).heightOfString(row[i], { width: w });
+        cellHeight = Math.max(cellHeight, Math.ceil(h) + 10);
+      }
+      if (y + cellHeight > tableBreakY) {
+        (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
+        doc.y = margin + 18;
+        y = doc.y;
+      }
+      x = tableX;
+      const isAlt = rowIndex % 2 === 1;
+      if (isAlt) doc.rect(tableX, y, tableW, cellHeight).fill(rowAlt);
+      row.forEach((cell, i) => {
+        doc.rect(x, y, colW[i], cellHeight).stroke();
+        if (i === 5) doc.fillColor(secondary);
+        else doc.fillColor(primary);
+        const cellPad = 4;
+        const cellWidth = colW[i] - cellPad * 2;
+        const align = i === 5 ? 'right' : 'left';
+        doc.text(cell, x + cellPad, y + 6, { width: cellWidth, align });
+        x += colW[i];
+      });
+      doc.fillColor(primary);
+      y += cellHeight;
+    });
+  }
+
   doc.y = y + 18;
   if (doc.y > pageH - minSpaceForResumen) {
     (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
@@ -1328,7 +2446,629 @@ export async function buildCashReportPdf(
   doc.fillColor(primary).text(`$ ${(data.totalTransferencia ?? 0).toFixed(2)}`, finalValueX, finalY0 + 78, { width: finalValueW, align: 'right' });
   doc.fillColor(secondary).text('TOTAL TARJETA:', finalLabelX, finalY0 + 94, { width: finalValueX - finalLabelX - 6 });
   doc.fillColor(primary).text(`$ ${(data.totalTarjeta ?? 0).toFixed(2)}`, finalValueX, finalY0 + 94, { width: finalValueW, align: 'right' });
-  doc.font('Helvetica-Bold').fillColor(accent).text(`Balance de caja (solo efectivo): $ ${data.balance.toFixed(2)}`, finalLabelX, finalY0 + 102);
+  doc
+    .font('Helvetica-Bold')
+    .fillColor(accent)
+    .text(`${data.balanceDescription}: $ ${data.balance.toFixed(2)}`, finalLabelX, finalY0 + 102, {
+      width: finalBoxW - finalBoxPad * 2,
+    });
+
+  doc.end();
+  return finish;
+}
+
+function fundsDestDisplay(t: CashTransactionWithCreator): string {
+  if (!t.funds_destination) return '—';
+  return FUNDS_DESTINATION_LABELS[t.funds_destination as FundsDestination] ?? String(t.funds_destination);
+}
+
+/** Excel: Escuela + DRA + movimientos unificados en un solo archivo. */
+export async function buildCashReportExcelCombined(
+  data: CashReportCombinedExportData,
+  reportType: string,
+  generatedAt: string,
+  generatedBy: string
+): Promise<Buffer> {
+  const ExcelJS = (await import('exceljs')).default;
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = SCHOOL_NAME;
+  const greenFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFD1FAE5' } };
+  const redFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFFEE2E2' } };
+
+  const sum = workbook.addWorksheet('Resumen integral', { views: [{ state: 'frozen', ySplit: 1 }] });
+  sum.columns = [{ key: 'k', width: 38 }, { key: 'v', width: 22 }];
+  sum.addRow(['REPORTE DE CAJA — COMPLETO (Escuela + DRA)', '']).font = { bold: true, size: 14 };
+  sum.addRow(['Institución', SCHOOL_NAME]);
+  sum.addRow(['Tipo de reporte', reportType]);
+  sum.addRow(['Período', `${data.startDate} → ${data.endDate}`]);
+  sum.addRow(['Generado', generatedAt]);
+  sum.addRow(['Usuario', generatedBy]);
+  sum.addRow([]);
+
+  const addBlock = (title: string, d: CashReportExportData) => {
+    const h = sum.addRow([title, '']);
+    h.getCell(1).font = { bold: true, size: 11 };
+    sum.addRow(['Total movimientos (incl. internas en detalle)', d.transactionCount]);
+    sum.addRow(['Total ingresos operativos', d.totalIncome]);
+    sum.addRow(['Total egresos operativos', d.totalExpense]);
+    sum.addRow(['Total efectivo (neto período)', d.totalEfectivo ?? 0]);
+    sum.addRow(['Total transferencias (neto período)', d.totalTransferencia ?? 0]);
+    sum.addRow(['Total tarjeta (neto período)', d.totalTarjeta ?? 0]);
+    const b = sum.addRow([d.balanceDescription, d.balance]);
+    b.getCell(2).numFmt = '"$"#,##0.00';
+    b.getCell(2).font = { bold: true };
+    b.getCell(2).fill = d.balance >= 0 ? greenFill : redFill;
+    sum.addRow([]);
+  };
+
+  addBlock('── Caja Escuela ──', data.escuela);
+  addBlock('── Caja DRA ──', data.dra);
+  const ih = sum.addRow(['── Transferencias internas (consolidado) ──', '']);
+  ih.getCell(1).font = { bold: true };
+  sum.addRow(['Cantidad de registros', data.allInternalTransfers.length]);
+  sum.addRow([
+    'Nota',
+    'No forman parte del ingreso/egreso operativo; reflejan traspasos entre libros.',
+  ]);
+
+  sum.getColumn(2).eachCell((cell, rowNumber) => {
+    if (rowNumber > 6 && typeof cell.value === 'number') cell.numFmt = '"$"#,##0.00';
+  });
+
+  const cadenceX = reportCadenceFromLabel(reportType);
+  if (cadenceX === 'semanal') {
+    const daily = buildCombinedDailyTable(data, true);
+    const ws = workbook.addWorksheet('Por día (totales semana)', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.addRow([
+      'Fecha',
+      'Esc. ingresos',
+      'Esc. egresos',
+      'Esc. neto',
+      'DRA ingresos',
+      'DRA egresos',
+      'DRA neto',
+      'Total ingresos',
+      'Total egresos',
+      'Neto combinado',
+      'Movs.',
+    ]);
+    ws.getRow(1).font = { bold: true };
+    let sEi = 0,
+      sEe = 0,
+      sDi = 0,
+      sDe = 0,
+      sTi = 0,
+      sTe = 0,
+      sCnt = 0;
+    for (const r of daily) {
+      const tIng = r.escuelaIncome + r.draIncome;
+      const tEgr = r.escuelaExpense + r.draExpense;
+      const row = ws.addRow([
+        r.date,
+        r.escuelaIncome,
+        r.escuelaExpense,
+        r.escuelaIncome - r.escuelaExpense,
+        r.draIncome,
+        r.draExpense,
+        r.draIncome - r.draExpense,
+        tIng,
+        tEgr,
+        tIng - tEgr,
+        r.count,
+      ]);
+      for (const c of [2, 3, 4, 5, 6, 7, 8, 9, 10]) row.getCell(c).numFmt = moneyFmtExcel;
+      sEi += r.escuelaIncome;
+      sEe += r.escuelaExpense;
+      sDi += r.draIncome;
+      sDe += r.draExpense;
+      sTi += tIng;
+      sTe += tEgr;
+      sCnt += r.count;
+    }
+    const tot = ws.addRow([
+      'TOTAL SEMANA',
+      sEi,
+      sEe,
+      sEi - sEe,
+      sDi,
+      sDe,
+      sDi - sDe,
+      sTi,
+      sTe,
+      sTi - sTe,
+      sCnt,
+    ]);
+    tot.font = { bold: true };
+    for (const c of [2, 3, 4, 5, 6, 7, 8, 9, 10]) tot.getCell(c).numFmt = moneyFmtExcel;
+    ws.getColumn(1).width = 12;
+  }
+  if (cadenceX === 'mensual') {
+    const daily = buildCombinedDailyTable(data, true);
+    const weeks = rollupCombinedDailyToWeeks(daily);
+    const ws = workbook.addWorksheet('Por semana (totales mes)', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.addRow([
+      'Semana (lun–dom)',
+      'Esc. ingresos',
+      'Esc. egresos',
+      'Esc. neto',
+      'DRA ingresos',
+      'DRA egresos',
+      'DRA neto',
+      'Total ingresos',
+      'Total egresos',
+      'Neto combinado',
+      'Movs.',
+    ]);
+    ws.getRow(1).font = { bold: true };
+    let sEi = 0,
+      sEe = 0,
+      sDi = 0,
+      sDe = 0,
+      sTi = 0,
+      sTe = 0,
+      sCnt = 0;
+    for (const w of weeks) {
+      const tIng = w.escuelaIncome + w.draIncome;
+      const tEgr = w.escuelaExpense + w.draExpense;
+      const row = ws.addRow([
+        w.label,
+        w.escuelaIncome,
+        w.escuelaExpense,
+        w.escuelaIncome - w.escuelaExpense,
+        w.draIncome,
+        w.draExpense,
+        w.draIncome - w.draExpense,
+        tIng,
+        tEgr,
+        tIng - tEgr,
+        w.count,
+      ]);
+      for (const c of [2, 3, 4, 5, 6, 7, 8, 9, 10]) row.getCell(c).numFmt = moneyFmtExcel;
+      sEi += w.escuelaIncome;
+      sEe += w.escuelaExpense;
+      sDi += w.draIncome;
+      sDe += w.draExpense;
+      sTi += tIng;
+      sTe += tEgr;
+      sCnt += w.count;
+    }
+    const tot = ws.addRow([
+      'TOTAL MES',
+      sEi,
+      sEe,
+      sEi - sEe,
+      sDi,
+      sDe,
+      sDi - sDe,
+      sTi,
+      sTe,
+      sTi - sTe,
+      sCnt,
+    ]);
+    tot.font = { bold: true };
+    for (const c of [2, 3, 4, 5, 6, 7, 8, 9, 10]) tot.getCell(c).numFmt = moneyFmtExcel;
+    ws.getColumn(1).width = 38;
+  }
+
+  const mov = workbook.addWorksheet('Movimientos integrados', { views: [{ state: 'frozen', ySplit: 1 }] });
+  mov.columns = [
+    { header: 'Libro', key: 'libro', width: 11 },
+    { header: 'Fecha y hora', key: 'date', width: 18 },
+    { header: 'Tipo', key: 'type', width: 14 },
+    { header: 'Concepto', key: 'concept', width: 30 },
+    { header: 'Categoría / detalle', key: 'category', width: 28 },
+    { header: 'Cuenta / banco', key: 'bank', width: 26 },
+    { header: 'Método', key: 'payment', width: 14 },
+    { header: 'Monto', key: 'amount', width: 14 },
+    { header: 'Usuario', key: 'user', width: 18 },
+    { header: 'Observaciones', key: 'notes', width: 26 },
+  ];
+  mov.getRow(1).font = { bold: true };
+
+  type RowT = CashTransactionWithCreator & { libro: string };
+  const operational: RowT[] = [
+    ...data.escuela.transactions.map((t) => ({ ...t, libro: 'Escuela' })),
+    ...data.dra.transactions.map((t) => ({ ...t, libro: 'DRA' })),
+  ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  for (const t of operational) {
+    const row = mov.addRow({
+      libro: t.libro,
+      date: formatDateForExport(t.created_at),
+      type: t.type === 'income' ? 'Ingreso' : 'Egreso',
+      concept: t.concept,
+      category: categoryLabel(t),
+      bank: fundsDestDisplay(t),
+      payment: PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+      amount: t.type === 'income' ? Number(t.amount) : -Number(t.amount),
+      user: t.created_by_name ?? '',
+      notes: t.notes ?? '',
+    });
+    const c = row.getCell(8);
+    c.numFmt = '"$"#,##0.00';
+    c.font = { color: { argb: t.type === 'income' ? 'FF059669' : 'FFDC2626' } };
+  }
+
+  if (data.allInternalTransfers.length > 0) {
+    mov.addRow([]);
+    const sep = mov.addRow({
+      libro: '—',
+      date: '',
+      type: 'Internas',
+      concept: 'Transferencias entre Escuela y DRA (no operativas)',
+      category: '',
+      bank: '',
+      payment: '',
+      amount: '',
+      user: '',
+      notes: '',
+    });
+    sep.getCell(1).font = { bold: true };
+    for (const t of data.allInternalTransfers) {
+      const row = mov.addRow({
+        libro: 'Interna',
+        date: formatDateForExport(t.created_at),
+        type: 'Transf. interna',
+        concept: t.concept,
+        category: categoryLabel(t),
+        bank: '—',
+        payment: PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+        amount: Number(t.amount),
+        user: t.created_by_name ?? '',
+        notes: t.notes ?? '',
+      });
+      row.getCell(8).numFmt = '"$"#,##0.00';
+      row.getCell(8).font = { color: { argb: 'FF64748B' } };
+    }
+  }
+
+  const intSheet = workbook.addWorksheet('Por libro (detalle)', { views: [{ state: 'frozen', ySplit: 1 }] });
+  intSheet.columns = [{ key: 'a', width: 14 }, { key: 'b', width: 40 }];
+  intSheet.addRow(['Escuela — resumen ejecutivo', '']).getCell(1).font = { bold: true };
+  intSheet.addRow(['Ingresos', data.escuela.totalIncome]);
+  intSheet.addRow(['Egresos', data.escuela.totalExpense]);
+  intSheet.addRow(['Balance indicado', data.escuela.balance]);
+  intSheet.addRow([]);
+  intSheet.addRow(['DRA — resumen ejecutivo', '']).getCell(1).font = { bold: true };
+  intSheet.addRow(['Ingresos', data.dra.totalIncome]);
+  intSheet.addRow(['Egresos', data.dra.totalExpense]);
+  intSheet.addRow(['Balance indicado', data.dra.balance]);
+
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
+/** PDF horizontal: resumen dual + tabla unificada con columna Libro. */
+export async function buildCashReportPdfCombined(
+  data: CashReportCombinedExportData,
+  reportType: string,
+  generatedAt: string,
+  generatedBy: string
+): Promise<Buffer> {
+  const PDFDocument = (await import('pdfkit')).default;
+  const doc = new PDFDocument(PDF_PAGE_OPTIONS);
+  const chunks: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+  const finish = new Promise<Buffer>((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+  });
+
+  const margin = PDF_PAGE_OPTIONS.margin;
+  const pageW = doc.page.width;
+  const pageH = doc.page.height;
+  const contentW = pageW - margin * 2;
+  const primary = '#0f172a';
+  const secondary = '#64748b';
+  const green = '#059669';
+  const red = '#dc2626';
+  const headerBg = '#1e293b';
+  const rowAlt = '#f8fafc';
+  const rowHeader = '#e2e8f0';
+  const boxBg = '#f1f5f9';
+  const accent = '#0f766e';
+  const rowH = 20;
+  const colW = [44, 56, 26, 128, 72, 44, 52, 128];
+  const tableW = colW.reduce((a, b) => a + b, 0);
+  const tableX = margin + (contentW - tableW) / 2;
+
+  doc.fontSize(20).font('Helvetica-Bold').fillColor(headerBg).text('REPORTE DE CAJA — COMPLETO', { align: 'center' });
+  doc.moveDown(0.35);
+  doc.fontSize(10).font('Helvetica').fillColor(secondary).text(SCHOOL_NAME, { align: 'center' });
+  doc.moveDown(0.4);
+  doc.fillColor(primary).text(`${reportType}  ·  ${data.startDate} a ${data.endDate}`, { align: 'center' });
+  doc.text(`Generado: ${generatedAt}  ·  ${generatedBy}`, { align: 'center' });
+  doc.moveDown(0.8);
+
+  const boxHalf = (contentW - 16) / 2;
+  const y0 = doc.y;
+  (doc as any).roundedRect(margin, y0, boxHalf, 92, 4).fillAndStroke(boxBg, primary);
+  (doc as any).roundedRect(margin + boxHalf + 16, y0, boxHalf, 92, 4).fillAndStroke(boxBg, primary);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(primary).text('Caja Escuela', margin + 10, y0 + 8);
+  doc.text('Caja DRA', margin + boxHalf + 26, y0 + 8);
+  doc.font('Helvetica').fontSize(8).fillColor(secondary);
+  let ly = y0 + 24;
+  doc.text(`Ingresos: $ ${data.escuela.totalIncome.toFixed(2)}`, margin + 10, ly);
+  doc.text(`Egresos: $ ${data.escuela.totalExpense.toFixed(2)}`, margin + 10, ly + 12);
+  doc.fillColor(accent).text(`${data.escuela.balanceDescription}`, margin + 10, ly + 28, { width: boxHalf - 20 });
+  doc.fillColor(primary).text(`$ ${data.escuela.balance.toFixed(2)}`, margin + 10, ly + 40);
+  ly = y0 + 24;
+  doc.fillColor(secondary).text(`Ingresos: $ ${data.dra.totalIncome.toFixed(2)}`, margin + boxHalf + 26, ly);
+  doc.text(`Egresos: $ ${data.dra.totalExpense.toFixed(2)}`, margin + boxHalf + 26, ly + 12);
+  doc.fillColor(accent).text(`${data.dra.balanceDescription}`, margin + boxHalf + 26, ly + 28, { width: boxHalf - 20 });
+  doc.fillColor(primary).text(`$ ${data.dra.balance.toFixed(2)}`, margin + boxHalf + 26, ly + 40);
+  doc.fontSize(7).fillColor(secondary).text(`Internas: ${data.allInternalTransfers.length} registro(s)`, margin + 10, y0 + 78);
+  doc.y = y0 + 102;
+
+  const cadencePdfC = reportCadenceFromLabel(reportType);
+  if (cadencePdfC === 'semanal' || cadencePdfC === 'mensual') {
+    const corteBreakY = pageH - 76;
+    const crh = 14;
+    const ccw = [48, 40, 40, 40, 40, 40, 40, 42, 42, 46, 22];
+    const ctw = ccw.reduce((a, b) => a + b, 0);
+    const ctx = margin + Math.max(0, (contentW - ctw) / 2);
+    const dailyCorte = buildCombinedDailyTable(data, true);
+    let tEi = 0,
+      tEe = 0,
+      tDi = 0,
+      tDe = 0,
+      tCnt = 0;
+    for (const r of dailyCorte) {
+      tEi += r.escuelaIncome;
+      tEe += r.escuelaExpense;
+      tDi += r.draIncome;
+      tDe += r.draExpense;
+      tCnt += r.count;
+    }
+    const tTi = tEi + tDi;
+    const tTe = tEe + tDe;
+    const corteRows: { cells: string[] }[] =
+      cadencePdfC === 'semanal'
+        ? dailyCorte.map((r) => {
+            const tIng = r.escuelaIncome + r.draIncome;
+            const tEgr = r.escuelaExpense + r.draExpense;
+            return {
+              cells: [
+                r.date,
+                r.escuelaIncome.toFixed(2),
+                r.escuelaExpense.toFixed(2),
+                (r.escuelaIncome - r.escuelaExpense).toFixed(2),
+                r.draIncome.toFixed(2),
+                r.draExpense.toFixed(2),
+                (r.draIncome - r.draExpense).toFixed(2),
+                tIng.toFixed(2),
+                tEgr.toFixed(2),
+                (tIng - tEgr).toFixed(2),
+                String(r.count),
+              ],
+            };
+          })
+        : rollupCombinedDailyToWeeks(dailyCorte).map((w) => {
+            const tIng = w.escuelaIncome + w.draIncome;
+            const tEgr = w.escuelaExpense + w.draExpense;
+            return {
+              cells: [
+                w.label,
+                w.escuelaIncome.toFixed(2),
+                w.escuelaExpense.toFixed(2),
+                (w.escuelaIncome - w.escuelaExpense).toFixed(2),
+                w.draIncome.toFixed(2),
+                w.draExpense.toFixed(2),
+                (w.draIncome - w.draExpense).toFixed(2),
+                tIng.toFixed(2),
+                tEgr.toFixed(2),
+                (tIng - tEgr).toFixed(2),
+                String(w.count),
+              ],
+            };
+          });
+    const drawCorteHdr = (yy: number) => {
+      const hdrs = ['Fecha / semana', 'E +', 'E −', 'E net', 'D +', 'D −', 'D net', 'Σ ing.', 'Σ egr.', 'Neto', '#'];
+      let cx = ctx;
+      hdrs.forEach((h, i) => {
+        doc.rect(cx, yy, ccw[i], crh).fill(rowHeader).stroke();
+        doc.font('Helvetica-Bold').fontSize(5).fillColor(primary).text(h, cx + 1, yy + 4, { width: ccw[i] - 2 });
+        cx += ccw[i];
+      });
+      return yy + crh;
+    };
+    if (doc.y + 48 > corteBreakY) {
+      (doc as { addPage: (o: object) => void }).addPage(PDF_PAGE_OPTIONS);
+      doc.y = margin + 12;
+    }
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(primary).text(
+      cadencePdfC === 'semanal'
+        ? 'Totales por día (operativo: Escuela y DRA; sin transferencias internas)'
+        : 'Totales por semana (lun–dom; operativo combinado)',
+      margin,
+      doc.y,
+      { width: contentW }
+    );
+    doc.moveDown(0.3);
+    let cy = drawCorteHdr(doc.y);
+    doc.font('Helvetica').fontSize(5).fillColor(primary);
+    corteRows.forEach((row, idx) => {
+      if (cy + crh > corteBreakY) {
+        (doc as { addPage: (o: object) => void }).addPage(PDF_PAGE_OPTIONS);
+        cy = margin + 12;
+        cy = drawCorteHdr(cy);
+        doc.font('Helvetica').fontSize(5).fillColor(primary);
+      }
+      if (idx % 2 === 1) doc.rect(ctx, cy, ctw, crh).fill(rowAlt);
+      let cx = ctx;
+      row.cells.forEach((cell, i) => {
+        doc.rect(cx, cy, ccw[i], crh).stroke();
+        doc.fillColor(primary).text(cell, cx + 2, cy + 3, {
+          width: ccw[i] - 4,
+          align: i >= 1 && i <= 9 ? 'right' : 'left',
+        });
+        cx += ccw[i];
+      });
+      cy += crh;
+    });
+    if (cy + crh > corteBreakY) {
+      (doc as { addPage: (o: object) => void }).addPage(PDF_PAGE_OPTIONS);
+      cy = margin + 12;
+    }
+    const totCells = [
+      cadencePdfC === 'semanal' ? 'TOTAL SEMANA' : 'TOTAL MES',
+      tEi.toFixed(2),
+      tEe.toFixed(2),
+      (tEi - tEe).toFixed(2),
+      tDi.toFixed(2),
+      tDe.toFixed(2),
+      (tDi - tDe).toFixed(2),
+      tTi.toFixed(2),
+      tTe.toFixed(2),
+      (tTi - tTe).toFixed(2),
+      String(tCnt),
+    ];
+    let cx = ctx;
+    totCells.forEach((cell, i) => {
+      doc.rect(cx, cy, ccw[i], crh).fill(rowHeader).stroke();
+      doc.font('Helvetica-Bold').fontSize(5).fillColor(primary).text(cell, cx + 2, cy + 3, {
+        width: ccw[i] - 4,
+        align: i >= 1 && i <= 9 ? 'right' : 'left',
+      });
+      cx += ccw[i];
+    });
+    cy += crh;
+    doc.y = cy + 10;
+  }
+
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(primary).text('Movimientos (Escuela + DRA)', margin, doc.y);
+  doc.moveDown(0.4);
+  const headers = ['Libro', 'Fecha', 'Tipo', 'Concepto', 'Banco/Cuenta', 'Método', 'Monto', 'Notas'];
+  let tableTop = doc.y;
+  doc.font('Helvetica-Bold').fontSize(7).fillColor(primary);
+  let x = tableX;
+  const headerPad = 2;
+  headers.forEach((h, i) => {
+    doc.rect(x, tableTop, colW[i], rowH).fill(rowHeader).stroke();
+    doc.fillColor(primary).text(h, x + headerPad, tableTop + 5, { width: colW[i] - 4 });
+    x += colW[i];
+  });
+  let y = tableTop + rowH;
+  doc.font('Helvetica').fontSize(7);
+  const tableBreakY = pageH - 72;
+
+  type RowT = CashTransactionWithCreator & { libro: string };
+  const operationalSorted: RowT[] = [
+    ...data.escuela.transactions.map((t) => ({ ...t, libro: 'Escuela' })),
+    ...data.dra.transactions.map((t) => ({ ...t, libro: 'DRA' })),
+  ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  const drawRows = operationalSorted.map((t) => ({
+    cells: [
+      t.libro,
+      formatDateForExport(t.created_at),
+      t.type === 'income' ? 'Ing.' : 'Egr.',
+      t.concept ?? '',
+      fundsDestDisplay(t),
+      PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+      (t.type === 'income' ? '+' : '−') + ' $' + Number(t.amount).toFixed(2),
+      (t.notes ?? '').slice(0, 90),
+    ],
+    income: t.type === 'income',
+  }));
+
+  drawRows.forEach((row, rowIndex) => {
+    x = tableX;
+    let cellHeight = rowH;
+    for (let i = 0; i < row.cells.length; i++) {
+      const w = colW[i] - 6;
+      const h = (doc as unknown as { heightOfString: (text: string, opts?: { width?: number }) => number }).heightOfString(
+        row.cells[i],
+        { width: w }
+      );
+      cellHeight = Math.max(cellHeight, Math.ceil(h) + 8);
+    }
+    if (y + cellHeight > tableBreakY) {
+      (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
+      doc.y = margin + 14;
+      y = doc.y;
+      doc.font('Helvetica-Bold').fontSize(7).fillColor(primary);
+      x = tableX;
+      headers.forEach((h, i) => {
+        doc.rect(x, y, colW[i], rowH).fill(rowHeader).stroke();
+        doc.text(h, x + headerPad, y + 5, { width: colW[i] - 4 });
+        x += colW[i];
+      });
+      y += rowH;
+      doc.font('Helvetica').fontSize(7);
+    }
+    x = tableX;
+    if (rowIndex % 2 === 1) doc.rect(tableX, y, tableW, cellHeight).fill(rowAlt);
+    row.cells.forEach((cell, i) => {
+      doc.rect(x, y, colW[i], cellHeight).stroke();
+      if (i === 6) doc.fillColor(row.income ? green : red);
+      else doc.fillColor(primary);
+      doc.text(cell, x + 3, y + 4, { width: colW[i] - 6, align: i === 6 ? 'right' : 'left' });
+      x += colW[i];
+    });
+    doc.fillColor(primary);
+    y += cellHeight;
+  });
+
+  if (data.allInternalTransfers.length > 0) {
+    doc.y = y + 12;
+    if (doc.y > tableBreakY - 40) {
+      (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
+      doc.y = margin + 14;
+      y = doc.y;
+    }
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(primary).text('Transferencias internas (no operativas)', margin, doc.y);
+    doc.moveDown(0.35);
+    y = doc.y;
+    doc.font('Helvetica-Bold').fontSize(7);
+    x = tableX;
+    headers.forEach((h, i) => {
+      doc.rect(x, y, colW[i], rowH).fill(rowHeader).stroke();
+      doc.text(h, x + headerPad, y + 5, { width: colW[i] - 4 });
+      x += colW[i];
+    });
+    y += rowH;
+    doc.font('Helvetica').fontSize(7);
+    data.allInternalTransfers.forEach((t, rowIndex) => {
+      const row = {
+        cells: [
+          'Int.',
+          formatDateForExport(t.created_at),
+          'Int.',
+          t.concept ?? '',
+          categoryLabel(t),
+          PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+          '$ ' + Number(t.amount).toFixed(2),
+          (t.notes ?? '').slice(0, 90),
+        ],
+        income: false as boolean,
+      };
+      x = tableX;
+      let cellHeight = rowH;
+      for (let i = 0; i < row.cells.length; i++) {
+        const w = colW[i] - 6;
+        const h = (doc as unknown as { heightOfString: (text: string, opts?: { width?: number }) => number }).heightOfString(
+          row.cells[i],
+          { width: w }
+        );
+        cellHeight = Math.max(cellHeight, Math.ceil(h) + 8);
+      }
+      if (y + cellHeight > tableBreakY) {
+        (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
+        doc.y = margin + 14;
+        y = doc.y;
+      }
+      x = tableX;
+      if (rowIndex % 2 === 1) doc.rect(tableX, y, tableW, cellHeight).fill(rowAlt);
+      row.cells.forEach((cell, i) => {
+        doc.rect(x, y, colW[i], cellHeight).stroke();
+        doc.fillColor(secondary);
+        doc.text(cell, x + 3, y + 4, { width: colW[i] - 6, align: i === 6 ? 'right' : 'left' });
+        x += colW[i];
+      });
+      doc.fillColor(primary);
+      y += cellHeight;
+    });
+  }
 
   doc.end();
   return finish;

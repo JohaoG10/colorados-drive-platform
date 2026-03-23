@@ -27,6 +27,140 @@ export interface CreateQuestionParams {
   options: { text: string; isCorrect: boolean }[];
 }
 
+/** Quita tildes y diacríticos para comparar sin importar acentos (incl. ñ → n) */
+function stripAccents(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/ñ/g, 'n')
+    .replace(/Ñ/g, 'N');
+}
+
+/** Distancia de Levenshtein (respuestas cortas) */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      row[j] =
+        a[i - 1] === b[j - 1]
+          ? prev
+          : 1 + Math.min(prev, row[j - 1], row[j]);
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+/**
+ * Palabras equivalentes en contexto de exámenes (p. ej. ciclos de motor).
+ * Claves y valores sin tildes, minúsculas.
+ */
+const OPEN_TEXT_SYNONYM_GROUPS: string[][] = [
+  ['explosion', 'combustion'],
+  ['compresion', 'comprension'],
+];
+
+function synonymEquivalent(a: string, b: string): boolean {
+  if (a === b) return true;
+  for (const g of OPEN_TEXT_SYNONYM_GROUPS) {
+    if (g.includes(a) && g.includes(b)) return true;
+  }
+  return false;
+}
+
+/** Una palabra del modelo coincide con una del estudiante */
+function openTextTokensMatch(modelKw: string, studentTok: string): boolean {
+  if (!modelKw || !studentTok) return false;
+  if (modelKw === studentTok) return true;
+  if (synonymEquivalent(modelKw, studentTok)) return true;
+  const n = Math.max(modelKw.length, studentTok.length);
+  if (n >= 4 && levenshtein(modelKw, studentTok) <= 1) return true;
+  return false;
+}
+
+/** Normaliza una palabra suelta: minúsculas, sin tildes, solo letras/números */
+function normalizeOpenTextToken(raw: string): string {
+  const t = stripAccents(raw.trim().toLowerCase());
+  return t.replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Parte una respuesta en “ítems” (orden no importa): barras, punto y coma, comas, saltos, espacios.
+ * Quita prefijos tipo a) b. 1.
+ */
+function splitOpenTextIntoItems(text: string): string[] {
+  const parts = text
+    .split(/[|;\n\r/,]+|\s+/u)
+    .map((p) =>
+      p
+        .trim()
+        .replace(/^\s*\(?[a-z]\)?[).:]\s*/i, '')
+        .replace(/^\s*\d+[).:]\s*/, '')
+        .trim()
+    )
+    .filter(Boolean);
+  return parts;
+}
+
+function extractOpenTextKeywordsFromLine(line: string): string[] {
+  const items = splitOpenTextIntoItems(line);
+  return items.map(normalizeOpenTextToken).filter((t) => t.length > 0);
+}
+
+/** Comparación de frase completa: ignora mayúsculas, tildes y signos de puntuación */
+function normalizeOpenTextLoosePhrase(s: string): string {
+  return stripAccents(s.trim().toLowerCase()).replace(/[^a-z0-9]+/g, '');
+}
+
+function openTextLoosePhraseMatch(studentRaw: string, modelLine: string): boolean {
+  const a = normalizeOpenTextLoosePhrase(studentRaw);
+  const b = normalizeOpenTextLoosePhrase(modelLine);
+  if (!a || !b) return false;
+  return a === b;
+}
+
+/**
+ * ¿La respuesta del estudiante cumple una línea modelo? (orden libre de palabras clave, o frase equivalente)
+ */
+function openTextLineMatchesStudent(studentRaw: string, modelLine: string): boolean {
+  const trimmed = modelLine.trim();
+  if (!trimmed) return false;
+  if (openTextLoosePhraseMatch(studentRaw, trimmed)) return true;
+
+  const modelKws = extractOpenTextKeywordsFromLine(trimmed);
+  if (modelKws.length === 0) return false;
+
+  const studentToks = splitOpenTextIntoItems(studentRaw).map(normalizeOpenTextToken).filter((t) => t.length > 0);
+  if (studentToks.length === 0) return false;
+
+  if (modelKws.length >= 2) {
+    const pool = [...studentToks];
+    for (const mk of modelKws) {
+      const idx = pool.findIndex((st) => openTextTokensMatch(mk, st));
+      if (idx === -1) return false;
+      pool.splice(idx, 1);
+    }
+    return true;
+  }
+
+  // Una sola palabra clave: aceptar si coincide con algún token o con la frase suelta
+  const mk = modelKws[0];
+  return studentToks.some((st) => openTextTokensMatch(mk, st)) || openTextLoosePhraseMatch(studentRaw, trimmed);
+}
+
+/** Cualquier línea alternativa del modelo satisface la respuesta */
+function openTextMatchesModelAlternatives(studentRaw: string, modelAlternativeLines: string[]): boolean {
+  const lines = modelAlternativeLines.map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) return false;
+  return lines.some((line) => openTextLineMatchesStudent(studentRaw, line));
+}
+
 export async function createExam(params: CreateExamParams) {
   if ((!params.subjectId && !params.courseId) || (params.subjectId && params.courseId)) {
     throw new Error('Exam must have either subjectId or courseId, not both');
@@ -420,13 +554,6 @@ export async function submitAttempt(
     (questions || []).filter((q) => (q as { type?: string }).type === 'open_text').map((q) => [q.id, Math.max(1, (q as { open_text_parts?: number }).open_text_parts ?? 1)])
   );
 
-  function normalizeForCompare(t: string): string {
-    return t
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, ' ');
-  }
-
   const { data: correctMap } = mcAnswers.length
     ? await supabaseAdmin.from('options').select('id, question_id, is_correct').in('question_id', mcAnswers.map((a) => a.questionId))
     : { data: [] as { id: string; question_id: string; is_correct: boolean }[] };
@@ -439,7 +566,12 @@ export async function submitAttempt(
     if (qType === 'open_text') {
       const partsCount = questionPartsCount.get(a.questionId) ?? 1;
       const modelText = questionModelAnswers.get(a.questionId) || '';
-      const modelParts = modelText.split('|||').map((p) => p.split(/\r?\n/).map((l) => normalizeForCompare(l)).filter(Boolean));
+      const modelParts = modelText.split('|||').map((p) =>
+        p
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean)
+      );
 
       let studentTexts: string[];
       if (partsCount > 1 && Array.isArray((a as { textAnswers?: string[] }).textAnswers)) {
@@ -450,21 +582,20 @@ export async function submitAttempt(
         studentTexts = [single];
       }
 
-      // Calificar sin importar el orden: cada respuesta del estudiante debe coincidir con una parte correcta (cualquiera)
+      // Respuesta abierta: orden libre, mayúsculas/tildes/puntuación irrelevantes; sinónimos y 1 error tipográfico
       let allCorrect = true;
       if (partsCount > 1) {
-        const studentNorm = studentTexts.map((t) => normalizeForCompare(t));
-        if (studentNorm.length !== partsCount) {
+        if (studentTexts.length !== partsCount) {
           allCorrect = false;
         } else {
           const used = new Set<number>();
           for (let i = 0; i < partsCount; i++) {
-            const models = modelParts[i] || [];
-            if (models.length === 0) continue;
+            const modelAltLines = modelParts[i] || [];
+            if (modelAltLines.length === 0) continue;
             let found = false;
-            for (let j = 0; j < studentNorm.length; j++) {
+            for (let j = 0; j < studentTexts.length; j++) {
               if (used.has(j)) continue;
-              if (models.some((m) => m === studentNorm[j])) {
+              if (openTextMatchesModelAlternatives(studentTexts[j], modelAltLines)) {
                 used.add(j);
                 found = true;
                 break;
@@ -477,9 +608,9 @@ export async function submitAttempt(
           }
         }
       } else {
-        const models = modelParts[0] || [];
-        const studentNorm = normalizeForCompare(studentTexts[0] || '');
-        if (models.length > 0 && !models.some((m) => m === studentNorm)) allCorrect = false;
+        const modelAltLines = modelParts[0] || [];
+        const studentRaw = studentTexts[0] || '';
+        if (modelAltLines.length > 0 && !openTextMatchesModelAlternatives(studentRaw, modelAltLines)) allCorrect = false;
       }
       const textToStore = partsCount > 1 ? JSON.stringify(studentTexts) : (studentTexts[0] || null);
       return {
