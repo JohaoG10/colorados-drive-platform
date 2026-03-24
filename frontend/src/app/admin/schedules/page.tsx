@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAuthHeaders, triggerSessionExpired } from '@/lib/api';
@@ -18,16 +18,22 @@ const DAYS: { value: number; label: string; short: string }[] = [
 ];
 
 const DAY_SHORT_BY_JS: string[] = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-const MONTH_SHORT: string[] = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
-/** Formatea YYYY-MM-DD a "Lun 3 feb" para las cards del overview. */
-function formatOverviewDate(isoDate: string): string {
-  const d = new Date(isoDate + 'T12:00:00');
-  if (Number.isNaN(d.getTime())) return isoDate;
-  const dayShort = DAY_SHORT_BY_JS[d.getDay()];
-  const dayNum = d.getDate();
-  const monthShort = MONTH_SHORT[d.getMonth()];
-  return `${dayShort} ${dayNum} ${monthShort}`;
+interface AdminCalendarCell {
+  hasSlot: boolean;
+  free: { instructorId: string; instructorName: string }[];
+  occupied: {
+    instructorId: string;
+    instructorName: string;
+    student_names: string[];
+    status: 'occupied_week1' | 'occupied_ending';
+  }[];
+}
+
+interface AdminScheduleCalendarResponse {
+  weekDates: string[];
+  hours: string[];
+  cells: Record<string, AdminCalendarCell>;
 }
 
 interface CourseSchedule {
@@ -39,45 +45,6 @@ interface CourseSchedule {
   created_at: string;
   instructors?: { id: string; full_name: string; email: string | null } | null;
   cohorts?: { id: string; name: string; code: string; course_id: string; courses?: { name: string } } | null;
-}
-
-interface ScheduleBlockForEnrollment {
-  key: string;
-  courseName: string;
-  cohortId: string;
-  cohortName: string;
-  timeLabel: string;
-  instructorId: string;
-  instructorName: string;
-  startTime: string;
-  scheduleType: 'weekdays' | 'weekends' | 'single';
-  totalSlots: number;
-  enrolledCount: number;
-  firstSlotId: string;
-  dayOfWeek: number;
-}
-
-/** Horario agrupado por curso y hora; cupos = instructores con 0 alumnos. */
-interface ScheduleSlotGroupedByTime {
-  cohortId: string;
-  courseName: string;
-  cohortName: string;
-  timeLabel: string;
-  startTime: string;
-  dayOfWeek: number;
-  days: number[];
-  scheduleType: 'weekdays' | 'weekends' | 'single';
-  instructors: { instructorId: string; instructorName: string; enrolledCount: number; firstSlotId: string }[];
-  cuposDisponibles: number;
-}
-
-/** Vista general semanal: una entrada por hora con X/Y cupos; disponibles/ocupados con fechas exactas. */
-interface ScheduleOverviewHour {
-  hour: string;
-  totalInstructors: number;
-  freeCount: number;
-  available: { instructorId: string; instructorName: string; freeDates?: string[] }[];
-  occupied: { instructorId: string; instructorName: string; studentNames: string[]; occupiedDates?: string[] }[];
 }
 
 interface Cohort {
@@ -97,10 +64,8 @@ interface Instructor {
 
 export default function AdminSchedulesPage() {
   const { token } = useAuth();
-  const [schedules, setSchedules] = useState<CourseSchedule[]>([]);
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [instructors, setInstructors] = useState<Instructor[]>([]);
-  const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
   const [filterCohortId, setFilterCohortId] = useState('');
   const [filterInstructorId, setFilterInstructorId] = useState('');
@@ -115,36 +80,14 @@ export default function AdminSchedulesPage() {
   const [changeScheduleSubmitting, setChangeScheduleSubmitting] = useState(false);
   const [changeScheduleError, setChangeScheduleError] = useState('');
   const [tab, setTab] = useState<'by-course' | 'by-instructor'>('by-course');
-  const [scheduleOverview, setScheduleOverview] = useState<ScheduleOverviewHour[]>([]);
-  const [blocksLoading, setBlocksLoading] = useState(false);
+  const [scheduleCalendar, setScheduleCalendar] = useState<AdminScheduleCalendarResponse | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [weekOffsetByCourse, setWeekOffsetByCourse] = useState(0);
-  const [expandedHour, setExpandedHour] = useState<string | null>(null);
   const [availabilityInstructorId, setAvailabilityInstructorId] = useState('');
   const [availability, setAvailability] = useState<{ occupied: { date: string; start_time: string; student_names: string[]; status: 'occupied_week1' | 'occupied_ending' }[]; free: { date: string; start_time: string }[] } | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [weekOffset, setWeekOffset] = useState(0);
-
-  const load = () => {
-    if (!token) return;
-    setApiError('');
-    const url = filterCohortId
-      ? `${API_URL}/api/admin/course-schedules?cohortId=${encodeURIComponent(filterCohortId)}`
-      : `${API_URL}/api/admin/course-schedules`;
-    fetch(url, { headers: getAuthHeaders(token) })
-      .then((r) => r.json().then((data) => ({ ok: r.ok, status: r.status, data })))
-      .then(({ ok, status, data }) => {
-        if (ok && Array.isArray(data)) {
-          setSchedules(data);
-        } else {
-          setSchedules([]);
-          if (status === 401) triggerSessionExpired();
-          else setApiError(data?.error || 'Error al cargar horarios.');
-        }
-      })
-      .catch(() => setSchedules([]))
-      .finally(() => setLoading(false));
-  };
 
   /** Lunes y domingo de la semana (offset 0 = actual) para Horarios por curso. */
   const getWeekStartEndByCourse = (offset: number) => {
@@ -160,29 +103,32 @@ export default function AdminSchedulesPage() {
     return { weekStart: toLocalISO(monday), weekEnd: toLocalISO(sunday) };
   };
 
-  const loadBlocks = () => {
+  const loadCalendar = useCallback(() => {
     if (!token) return;
-    setBlocksLoading(true);
+    setCalendarLoading(true);
     const params = new URLSearchParams();
     const { weekStart, weekEnd } = getWeekStartEndByCourse(weekOffsetByCourse);
     params.set('weekStart', weekStart);
     params.set('weekEnd', weekEnd);
     if (filterCohortId) params.set('cohortId', filterCohortId);
     if (filterInstructorId) params.set('instructorId', filterInstructorId);
-    fetch(`${API_URL}/api/admin/schedule-overview?${params.toString()}`, { headers: getAuthHeaders(token) })
+    fetch(`${API_URL}/api/admin/schedule-calendar?${params.toString()}`, { headers: getAuthHeaders(token) })
       .then((r) => r.json().then((d) => ({ ok: r.ok, status: r.status, data: d })))
       .then(({ ok, status, data }) => {
         if (status === 401) triggerSessionExpired();
-        if (ok && Array.isArray(data)) setScheduleOverview(data);
-        else setScheduleOverview([]);
+        if (ok && data && Array.isArray(data.weekDates) && Array.isArray(data.hours) && data.cells && typeof data.cells === 'object') {
+          setScheduleCalendar(data as AdminScheduleCalendarResponse);
+        } else {
+          setScheduleCalendar(null);
+        }
       })
-      .catch(() => setScheduleOverview([]))
-      .finally(() => setBlocksLoading(false));
-  };
+      .catch(() => setScheduleCalendar(null))
+      .finally(() => setCalendarLoading(false));
+  }, [token, weekOffsetByCourse, filterCohortId, filterInstructorId]);
 
   useEffect(() => {
-    if (tab === 'by-course') loadBlocks();
-  }, [token, tab, filterCohortId, filterInstructorId, weekOffsetByCourse]);
+    if (tab === 'by-course') loadCalendar();
+  }, [tab, loadCalendar]);
 
   useEffect(() => {
     if (!token) return;
@@ -195,15 +141,21 @@ export default function AdminSchedulesPage() {
     });
   }, [token]);
 
-  /** Filtra horas del overview por estado: disponible (todos libres), ultimos (parcial), lleno (ninguno libre). */
-  const filteredOverview = scheduleOverview.filter((row) => {
-    const total = row.totalInstructors;
-    const free = row.freeCount;
-    if (filterStatus === 'disponible') return total > 0 && free === total;
-    if (filterStatus === 'ultimos') return free > 0 && free < total;
-    if (filterStatus === 'lleno') return total > 0 && free === 0;
+  const calendarCellKey = (date: string, hour: string) => {
+    const h = hour.trim().slice(0, 5);
+    const norm = h.length === 4 && h[1] === ':' ? `0${h}` : h;
+    return `${date.slice(0, 10)}|${norm}`;
+  };
+
+  const cellMatchesStatusFilter = (cell: AdminCalendarCell): boolean => {
+    if (!filterStatus || !cell.hasSlot) return true;
+    const hasF = cell.free.length > 0;
+    const hasO = cell.occupied.length > 0;
+    if (filterStatus === 'disponible') return hasF && !hasO;
+    if (filterStatus === 'ultimos') return hasF && hasO;
+    if (filterStatus === 'lleno') return hasO && !hasF;
     return true;
-  });
+  };
 
   /** Lunes y domingo de la semana mostrada en fecha local YYYY-MM-DD (weekOffset: 0 = actual) */
   const getWeekStartEnd = (offset: number) => {
@@ -343,34 +295,11 @@ export default function AdminSchedulesPage() {
       if (!res.ok) throw new Error(data?.error || 'Error al cambiar horario');
       setChangeScheduleStudent(null);
       setStudentsModal(null);
-      load();
-      loadBlocks();
+      loadCalendar();
     } catch (err) {
       setChangeScheduleError(err instanceof Error ? err.message : 'Error al cambiar horario');
     } finally {
       setChangeScheduleSubmitting(false);
-    }
-  };
-
-  const handleDeleteSlot = async (schedule: CourseSchedule) => {
-    const courseName = schedule.cohorts?.courses?.name || 'Curso';
-    const cohortName = schedule.cohorts?.name || schedule.cohorts?.code || '';
-    const dayLabel = DAYS.find((d) => d.value === schedule.day_of_week)?.label || '';
-    if (!confirm(`¿Eliminar horario: ${courseName} Nro ${cohortName} - ${dayLabel} ${schedule.start_time}? El alumno asignado quedará sin horario.`)) return;
-    if (!token) return;
-    try {
-      const res = await fetch(`${API_URL}/api/admin/course-schedules/${schedule.id}`, {
-        method: 'DELETE',
-        headers: getAuthHeaders(token),
-      });
-      if (res.status === 401) { triggerSessionExpired(); return; }
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error al eliminar');
-      load();
-      loadBlocks();
-      if (studentsModal?.id === schedule.id) { setStudentsModal(null); setStudentsModalTimeLabel(null); }
-    } catch (err) {
-      setApiError(err instanceof Error ? err.message : 'Error al eliminar');
     }
   };
 
@@ -395,7 +324,9 @@ export default function AdminSchedulesPage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Horarios</h1>
-            <p className="mt-1 text-teal-100 text-sm max-w-xl">Consulta horarios por curso, asigna alumnos y revisa qué días y horas tiene libre cada instructor para inscribir nuevos estudiantes.</p>
+            <p className="mt-1 text-teal-100 text-sm max-w-xl">
+              Vista tipo calendario con todos los instructores: en cada día y hora verás quién tiene cupo libre y quién está ocupado, para planear inscripciones sin abrir cada agenda por separado.
+            </p>
           </div>
         </div>
       </div>
@@ -411,7 +342,7 @@ export default function AdminSchedulesPage() {
               : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50/50'
           }`}
         >
-          Horarios por curso
+          Calendario de cupos
         </button>
         <button
           type="button"
@@ -575,7 +506,9 @@ export default function AdminSchedulesPage() {
           {/* Navegación semanal (mismo estilo que Disponibilidad por instructor) */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">Semana a consultar</h3>
-            <p className="mb-4 text-sm text-slate-600">La disponibilidad y los cupos se calculan para la semana seleccionada.</p>
+            <p className="mb-4 text-sm text-slate-600">
+              La grilla cruza la semana con las mismas reglas que el calendario del instructor: alumnos visibles solo en su periodo de prácticas.
+            </p>
             <div className="flex flex-wrap items-center gap-3">
               <nav className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50/80 p-1.5">
                 <button
@@ -673,112 +606,219 @@ export default function AdminSchedulesPage() {
             </div>
           </div>
 
-          {/* Resumen: total cupos en las horas mostradas */}
-          {!blocksLoading && scheduleOverview.length > 0 && (
-            <p className="text-sm text-slate-600">
-              Vista general de la semana: <span className="font-semibold text-slate-800">{scheduleOverview.length}</span> horas
-              {filterStatus && ` (filtro: ${filterStatus === 'disponible' ? 'disponible' : filterStatus === 'ultimos' ? 'parcial' : 'lleno'})`}.
-              Total instructores en horario: {scheduleOverview.reduce((s, r) => s + r.totalInstructors, 0) > 0 ? 'según cada hora' : 'ninguno'}.
-            </p>
-          )}
-
-          {/* Grid: todas las horas con X/Y y estado verde / naranja / rojo */}
-          {blocksLoading ? (
-            <div className="flex flex-col items-center justify-center gap-3 py-20 rounded-2xl border border-slate-200 bg-white">
+          {/* Calendario agregado */}
+          {calendarLoading ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-20 rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="h-10 w-10 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
-              <p className="text-sm text-slate-500">Cargando vista general...</p>
+              <p className="text-sm text-slate-500">Cargando calendario…</p>
             </div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-              {filteredOverview.map((row) => {
-                const total = row.totalInstructors;
-                const free = row.freeCount;
-                const status: 'disponible' | 'parcial' | 'lleno' =
-                  total === 0 ? 'lleno' : free === total ? 'disponible' : free > 0 ? 'parcial' : 'lleno';
-                const statusConfig = {
-                  disponible: { label: 'Disponible', bg: 'bg-emerald-100 border-emerald-300', text: 'text-emerald-800', badge: 'bg-emerald-200 text-emerald-900' },
-                  parcial: { label: 'Parcial', bg: 'bg-amber-50 border-amber-300', text: 'text-amber-800', badge: 'bg-amber-200 text-amber-900' },
-                  lleno: { label: 'Sin cupo', bg: 'bg-red-50 border-red-200', text: 'text-red-800', badge: 'bg-red-200 text-red-900' },
-                }[status];
-                const isExpanded = expandedHour === row.hour;
-                const cupoLabel = total === 0 ? '0/0' : `${free}/${total}`;
+          ) : scheduleCalendar && scheduleCalendar.weekDates.length > 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-md shadow-slate-200/50 overflow-x-auto">
+              <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
+                <div>
+                  <h3 className="font-semibold text-slate-900 text-lg tracking-tight">Disponibilidad de instructores</h3>
+                  <p className="text-sm text-slate-600 mt-1 max-w-2xl">
+                    Vista semanal por franja: colores equilibrados (ni chillones ni apagados) y celdas tipo tarjeta para leer rápido quién tiene cupo.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-700">
+                  <span className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-2.5 py-1.5 ring-1 ring-slate-200/80">
+                    <span className="h-2 w-2 rounded-full bg-slate-400" />
+                    Sin horario
+                  </span>
+                  <span className="inline-flex items-center gap-2 rounded-lg bg-emerald-100/90 px-2.5 py-1.5 ring-1 ring-emerald-300/60">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    Cupo libre
+                  </span>
+                  <span className="inline-flex items-center gap-2 rounded-lg bg-rose-100/90 px-2.5 py-1.5 ring-1 ring-rose-300/60">
+                    <span className="h-2 w-2 rounded-full bg-rose-500" />
+                    Ocupado
+                  </span>
+                  <span className="inline-flex items-center gap-2 rounded-lg bg-amber-100/90 px-2.5 py-1.5 ring-1 ring-amber-300/60">
+                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                    Acabando clase
+                  </span>
+                </div>
+              </div>
+
+              {(() => {
+                let cellsWithSlot = 0;
+                let freeOnlyCells = 0;
+                let mixedCells = 0;
+                let fullCells = 0;
+                for (const k of Object.keys(scheduleCalendar.cells)) {
+                  const c = scheduleCalendar.cells[k];
+                  if (!c?.hasSlot) continue;
+                  cellsWithSlot += 1;
+                  const f = c.free.length > 0;
+                  const o = c.occupied.length > 0;
+                  if (f && !o) freeOnlyCells += 1;
+                  else if (f && o) mixedCells += 1;
+                  else if (o) fullCells += 1;
+                }
                 return (
-                  <div
-                    key={row.hour}
-                    className={`rounded-xl border ${statusConfig.bg} overflow-hidden transition-all`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setExpandedHour(isExpanded ? null : row.hour)}
-                      className="w-full p-4 text-left"
-                    >
-                      <p className="text-xl font-bold text-slate-900">{row.hour}</p>
-                      <p className={`mt-1 text-sm font-semibold ${statusConfig.text}`}>
-                        {cupoLabel} {total === 1 ? 'cupo disponible' : 'cupos disponibles'}
-                      </p>
-                      <span className={`mt-2 inline-block rounded-lg px-2 py-0.5 text-xs font-medium ${statusConfig.badge}`}>
-                        {statusConfig.label}
+                  <p className="text-sm text-slate-600 mb-4">
+                    <span className="font-semibold text-slate-800">{cellsWithSlot}</span> celdas con horario definido esta semana
+                    {filterStatus && (
+                      <span className="text-slate-500">
+                        {' '}
+                        · filtro:{' '}
+                        {filterStatus === 'disponible' ? 'solo cupos libres' : filterStatus === 'ultimos' ? 'mixto (libre + ocupado)' : 'solo llenos'}
                       </span>
-                    </button>
-                    {isExpanded && (
-                      <div className="border-t border-slate-200/50 bg-white/80 px-4 py-3 text-sm">
-                        {row.available.length > 0 && (
-                          <>
-                            <p className="font-medium text-slate-700 mt-1">Disponibles (fechas exactas):</p>
-                            <div className="text-slate-600 space-y-1.5 pl-4">
-                              {row.available.map((a) => {
-                                const dates = (a as { freeDates?: string[] }).freeDates ?? [];
-                                const formatted = dates.length > 0
-                                  ? dates.map((d) => formatOverviewDate(d)).join(', ')
-                                  : '—';
-                                return (
-                                  <div key={a.instructorId}>
-                                    <span className="font-medium text-slate-700">{a.instructorName}</span>
-                                    <span className="text-slate-500">: {formatted}</span>
+                    )}
+                    {cellsWithSlot > 0 && (
+                      <span className="text-slate-500">
+                        {' '}
+                        — {freeOnlyCells} solo libres, {mixedCells} mixtas, {fullCells} solo ocupadas
+                      </span>
+                    )}
+                  </p>
+                );
+              })()}
+
+              <div className="min-w-[720px] rounded-xl bg-slate-200/35 p-2 sm:p-2.5">
+                <table className="w-full text-sm border-separate border-spacing-2 table-fixed">
+                  <thead>
+                    <tr>
+                      <th className="w-[56px] rounded-lg bg-slate-700 py-3 pl-2 pr-1 text-left text-[10px] font-bold uppercase tracking-widest text-slate-200 sticky left-0 z-20 shadow-lg shadow-slate-900/15 ring-1 ring-slate-600/50">
+                        Hora
+                      </th>
+                      {scheduleCalendar.weekDates.map((iso) => {
+                        const d = new Date(`${iso}T12:00:00`);
+                        const short = DAY_SHORT_BY_JS[d.getDay()];
+                        return (
+                          <th
+                            key={iso}
+                            className="rounded-lg bg-gradient-to-b from-slate-700 to-slate-800 py-3 px-1.5 text-center text-xs font-semibold text-white shadow-md shadow-slate-900/20 ring-1 ring-slate-600/40 min-w-[104px]"
+                            title={iso}
+                          >
+                            <span className="block text-white">{short}</span>
+                            <span className="block text-[10px] font-medium text-slate-300 tabular-nums mt-1">
+                              {d.getDate()}/{d.getMonth() + 1}
+                            </span>
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scheduleCalendar.hours.map((hour) => (
+                      <tr key={hour}>
+                        <td className="rounded-lg bg-white py-2.5 pl-2 pr-1 text-center text-slate-700 font-bold text-[11px] tabular-nums sticky left-0 z-10 shadow-md shadow-slate-300/30 ring-1 ring-slate-200">
+                          {hour}
+                        </td>
+                        {scheduleCalendar.weekDates.map((dateStr) => {
+                          const cell =
+                            scheduleCalendar.cells[calendarCellKey(dateStr, hour)] ?? {
+                              hasSlot: false,
+                              free: [],
+                              occupied: [],
+                            };
+                          const dimmed = Boolean(filterStatus && cell.hasSlot && !cellMatchesStatusFilter(cell));
+                          const titleParts: string[] = [];
+                          if (cell.free.length) {
+                            titleParts.push(`Libre: ${cell.free.map((x) => x.instructorName).join(', ')}`);
+                          }
+                          if (cell.occupied.length) {
+                            cell.occupied.forEach((o) => {
+                              const st = o.student_names?.length ? ` — ${o.student_names.join(', ')}` : '';
+                              titleParts.push(`${o.instructorName}${st}`);
+                            });
+                          }
+                          return (
+                            <td key={`${dateStr}-${hour}`} className="p-0 align-top">
+                              <div
+                                className={`rounded-xl min-h-[58px] overflow-hidden bg-white ring-1 ring-slate-300/80 shadow-sm transition-all hover:shadow-md hover:ring-slate-400/60 ${
+                                  dimmed ? 'opacity-[0.42] saturate-50' : ''
+                                }`}
+                                title={titleParts.length ? titleParts.join(' | ') : undefined}
+                              >
+                                {!cell.hasSlot ? (
+                                  <div className="min-h-[58px] flex flex-col items-center justify-center gap-1 bg-gradient-to-b from-slate-50 to-slate-100/80 text-slate-400">
+                                    <span className="text-[10px] font-semibold tracking-wide text-slate-400">—</span>
+                                    <span className="h-px w-6 bg-slate-300/60 rounded-full" aria-hidden />
                                   </div>
-                                );
-                              })}
-                            </div>
-                          </>
-                        )}
-                        {row.occupied.length > 0 && (
-                          <>
-                            <p className="font-medium text-slate-700 mt-2">Ocupados (fechas exactas):</p>
-                            <div className="text-slate-600 space-y-1.5 pl-4">
-                              {row.occupied.map((o) => {
-                                const dates = (o as { occupiedDates?: string[] }).occupiedDates ?? [];
-                                const formatted = dates.length > 0
-                                  ? dates.map((d) => formatOverviewDate(d)).join(', ')
-                                  : '—';
-                                return (
-                                  <div key={o.instructorId}>
-                                    <span className="font-medium text-slate-700">{o.instructorName}</span>
-                                    <span className="text-slate-500">: {formatted}</span>
-                                    {o.studentNames?.length > 0 && (
-                                      <span className="text-slate-500"> → {o.studentNames.join(', ')}</span>
+                                ) : (
+                                  <div className="flex flex-col min-h-[58px] gap-1 p-1">
+                                    {cell.free.length > 0 && (
+                                      <div className="rounded-lg border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-teal-50/80 to-emerald-100/50 px-2 py-1.5 space-y-1 shadow-sm">
+                                        <p className="text-[9px] font-extrabold uppercase tracking-wide text-emerald-800">
+                                          Libre · {cell.free.length}
+                                        </p>
+                                        {cell.free.map((f) => (
+                                          <p
+                                            key={f.instructorId}
+                                            className="text-[10px] font-semibold leading-snug text-emerald-950 truncate border-l-2 border-emerald-500 pl-1.5"
+                                            title={f.instructorName}
+                                          >
+                                            {f.instructorName}
+                                          </p>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {cell.occupied.length > 0 && (
+                                      <div className="flex flex-col gap-1">
+                                        {cell.occupied.map((o) => {
+                                          const ending = o.status === 'occupied_ending';
+                                          const names = o.student_names?.length ? o.student_names.join(', ') : '';
+                                          return (
+                                            <div
+                                              key={o.instructorId}
+                                              className={`rounded-lg border-y border-r px-2 py-1.5 shadow-sm ${
+                                                ending
+                                                  ? 'border-amber-300/90 border-l-4 border-l-amber-500 bg-gradient-to-br from-amber-100 to-amber-50'
+                                                  : 'border-rose-300/90 border-l-4 border-l-rose-500 bg-gradient-to-br from-rose-100 to-rose-50'
+                                              }`}
+                                            >
+                                              <p
+                                                className="text-[9px] font-extrabold uppercase tracking-wide leading-tight truncate text-slate-900"
+                                                title={o.instructorName}
+                                              >
+                                                {o.instructorName}
+                                                <span className={`font-bold normal-case ${ending ? 'text-amber-900' : 'text-rose-900'}`}>
+                                                  {ending ? ' · acabando' : ' · ocupado'}
+                                                </span>
+                                              </p>
+                                              {names ? (
+                                                <p
+                                                  className="text-[9px] font-semibold normal-case text-slate-700 mt-0.5 line-clamp-2"
+                                                  title={names}
+                                                >
+                                                  {names}
+                                                </p>
+                                              ) : null}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
                                     )}
                                   </div>
-                                );
-                              })}
-                            </div>
-                          </>
-                        )}
-                        {total === 0 && (
-                          <p className="text-slate-500 mt-1">Ningún instructor con esta hora en el horario.</p>
-                        )}
-                        {row.freeCount > 0 && (
-                          <Link
-                            href={`/admin/users${filterCohortId ? `?cohortId=${encodeURIComponent(filterCohortId)}` : ''}`}
-                            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-700"
-                          >
-                            Inscribir alumno
-                          </Link>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                                )}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 pt-4">
+                <p className="text-xs text-slate-500">
+                  Pasa el cursor sobre una celda para ver el texto completo. El filtro «Estado» atenúa suavemente las celdas que no coinciden.
+                </p>
+                <Link
+                  href={`/admin/users${filterCohortId ? `?cohortId=${encodeURIComponent(filterCohortId)}` : ''}`}
+                  className="inline-flex items-center gap-2 rounded-xl border border-teal-200 bg-teal-600/95 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-teal-700 transition-colors"
+                >
+                  Inscribir alumno
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-white py-16 text-center text-slate-500 shadow-sm">
+              No hay datos de calendario para esta semana o filtros. Prueba otra semana o amplía el curso/instructor.
             </div>
           )}
         </div>

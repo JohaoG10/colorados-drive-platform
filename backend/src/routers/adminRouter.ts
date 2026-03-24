@@ -1296,6 +1296,24 @@ router.get('/schedule-overview', async (req: AuthenticatedRequest, res: Response
   }
 });
 
+/** Calendario semanal agregado: por cada día y hora, instructores con cupo libre u ocupados (inscripciones). */
+router.get('/schedule-calendar', async (req: AuthenticatedRequest, res: Response) => {
+  const weekStart = req.query.weekStart as string | undefined;
+  const weekEnd = req.query.weekEnd as string | undefined;
+  const cohortId = req.query.cohortId as string | undefined;
+  const instructorId = req.query.instructorId as string | undefined;
+  if (!weekStart || !weekEnd) {
+    res.status(400).json({ error: 'weekStart y weekEnd son requeridos (YYYY-MM-DD)' });
+    return;
+  }
+  try {
+    const calendar = await scheduleService.getAdminScheduleCalendarForWeek(weekStart, weekEnd, cohortId, instructorId);
+    res.json(calendar);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
 router.delete('/course-schedules/:id', [param('id').isUUID()], async (req: AuthenticatedRequest, res: Response) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {

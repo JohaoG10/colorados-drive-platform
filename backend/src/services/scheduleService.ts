@@ -896,6 +896,112 @@ export async function getScheduleOverviewForWeek(
   return result;
 }
 
+export interface AdminScheduleCalendarCell {
+  hasSlot: boolean;
+  free: { instructorId: string; instructorName: string }[];
+  occupied: {
+    instructorId: string;
+    instructorName: string;
+    student_names: string[];
+    status: 'occupied_week1' | 'occupied_ending';
+  }[];
+}
+
+/**
+ * Matriz semanal día × hora para administración: instructores libres y ocupados por celda (misma lógica que el calendario del instructor).
+ */
+export async function getAdminScheduleCalendarForWeek(
+  weekStartISO: string,
+  weekEndISO: string,
+  cohortId?: string,
+  instructorId?: string
+): Promise<{
+  weekDates: string[];
+  hours: string[];
+  cells: Record<string, AdminScheduleCalendarCell>;
+}> {
+  const weekStart = parseLocalDate(weekStartISO);
+  const weekEnd = parseLocalDate(weekEndISO);
+  weekEnd.setHours(23, 59, 59, 999);
+  const weekDates: string[] = [];
+  for (let d = new Date(weekStart.getTime()); d <= weekEnd; d.setDate(d.getDate() + 1)) {
+    weekDates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+
+  let query = supabaseAdmin
+    .from('course_schedules')
+    .select('instructor_id, instructors(id, full_name)')
+    .not('instructor_id', 'is', null);
+  if (cohortId) query = query.eq('cohort_id', cohortId);
+  if (instructorId) query = query.eq('instructor_id', instructorId);
+  const { data: rows, error } = await query;
+  if (error) throw new Error(error.message);
+
+  const allInstructorIds = new Set<string>();
+  const instIdToInfo = new Map<string, { instructorId: string; instructorName: string }>();
+  for (const r of rows || []) {
+    const instId = String((r as { instructor_id: unknown }).instructor_id ?? '');
+    if (!instId) continue;
+    allInstructorIds.add(instId);
+    if (!instIdToInfo.has(instId)) {
+      const instr = (r as { instructors?: { full_name?: string } | { full_name?: string }[] }).instructors;
+      const single = Array.isArray(instr) ? instr[0] : instr;
+      const name = (single as { full_name?: string } | null)?.full_name ?? '—';
+      instIdToInfo.set(instId, { instructorId: instId, instructorName: name });
+    }
+  }
+
+  const emptyCell = (): AdminScheduleCalendarCell => ({
+    hasSlot: false,
+    free: [],
+    occupied: [],
+  });
+
+  const cells: Record<string, AdminScheduleCalendarCell> = {};
+  const calendarCellKey = (date: string, hour: string) => `${date.slice(0, 10)}|${normalizeTimeToHHmm(hour)}`;
+
+  for (const date of weekDates) {
+    for (const hour of HOURS_6_TO_23) {
+      cells[calendarCellKey(date, hour)] = emptyCell();
+    }
+  }
+
+  for (const instId of allInstructorIds) {
+    const info = instIdToInfo.get(instId);
+    if (!info) continue;
+    const { free, occupied } = await getInstructorAvailabilityForWeek(instId, weekStartISO, weekEndISO, cohortId ?? undefined);
+
+    for (const f of free) {
+      const date = f.date.slice(0, 10);
+      const h = normalizeTimeToHHmm(f.start_time);
+      const k = calendarCellKey(date, h);
+      const c = cells[k];
+      if (!c) continue;
+      c.hasSlot = true;
+      if (!c.free.some((x) => x.instructorId === instId)) {
+        c.free.push({ instructorId: instId, instructorName: info.instructorName });
+      }
+    }
+    for (const o of occupied) {
+      const date = o.date.slice(0, 10);
+      const h = normalizeTimeToHHmm(o.start_time);
+      const k = calendarCellKey(date, h);
+      const c = cells[k];
+      if (!c) continue;
+      c.hasSlot = true;
+      c.free = c.free.filter((x) => x.instructorId !== instId);
+      c.occupied.push({
+        instructorId: instId,
+        instructorName: info.instructorName,
+        student_names: o.student_names ?? [],
+        status: o.status,
+      });
+    }
+  }
+
+  return { weekDates, hours: [...HOURS_6_TO_23], cells };
+}
+
 export async function getScheduleWithStudents(scheduleId: string) {
   const { data: schedule, error: sErr } = await supabaseAdmin
     .from('course_schedules')
