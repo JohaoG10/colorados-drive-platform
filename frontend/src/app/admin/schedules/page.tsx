@@ -21,7 +21,7 @@ const DAY_SHORT_BY_JS: string[] = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'S
 
 interface AdminCalendarCell {
   hasSlot: boolean;
-  free: { instructorId: string; instructorName: string }[];
+  free: { instructorId: string; instructorName: string; implicitAvailability?: boolean }[];
   occupied: {
     instructorId: string;
     instructorName: string;
@@ -312,19 +312,19 @@ export default function AdminSchedulesPage() {
   const formatTime = (s: CourseSchedule) => (typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : s.start_time);
 
   return (
-    <div className="space-y-8">
+    <div className="w-full min-w-0 max-w-full space-y-6 sm:space-y-8">
       {/* Header */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-teal-600 via-teal-600 to-teal-800 p-8 text-white shadow-xl shadow-teal-900/20">
+      <div className="relative overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-br from-teal-600 via-teal-600 to-teal-800 p-4 sm:p-6 lg:p-8 text-white shadow-xl shadow-teal-900/20">
         <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.06\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-90" />
-        <div className="relative z-10 flex items-center gap-4">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
-            <svg className="h-7 w-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-5">
+          <div className="flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-xl bg-white/20 backdrop-blur">
+            <svg className="h-6 w-6 sm:h-7 sm:w-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Horarios</h1>
-            <p className="mt-1 text-teal-100 text-sm max-w-xl">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Horarios</h1>
+            <p className="mt-1.5 text-teal-100 text-xs sm:text-sm leading-relaxed max-w-2xl">
               Vista tipo calendario con todos los instructores: en cada día y hora verás quién tiene cupo libre y quién está ocupado, para planear inscripciones sin abrir cada agenda por separado.
             </p>
           </div>
@@ -332,11 +332,11 @@ export default function AdminSchedulesPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-slate-200 overflow-x-auto">
+      <div className="flex gap-1 sm:gap-2 border-b border-slate-200 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] pb-px">
         <button
           type="button"
           onClick={() => setTab('by-course')}
-          className={`px-5 py-3 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+          className={`shrink-0 touch-manipulation whitespace-nowrap px-3 py-2.5 sm:px-5 sm:py-3 text-xs sm:text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
             tab === 'by-course'
               ? 'border-teal-600 text-teal-700 bg-white border-b-white -mb-px'
               : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50/50'
@@ -347,7 +347,7 @@ export default function AdminSchedulesPage() {
         <button
           type="button"
           onClick={() => setTab('by-instructor')}
-          className={`px-5 py-3 text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+          className={`shrink-0 touch-manipulation whitespace-nowrap px-3 py-2.5 sm:px-5 sm:py-3 text-xs sm:text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
             tab === 'by-instructor'
               ? 'border-teal-600 text-teal-700 bg-white border-b-white -mb-px'
               : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50/50'
@@ -358,7 +358,7 @@ export default function AdminSchedulesPage() {
       </div>
 
       {apiError && (
-        <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+        <div className="flex items-start sm:items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 sm:px-4 text-sm text-amber-800">
           <svg className="h-5 w-5 shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
@@ -368,17 +368,17 @@ export default function AdminSchedulesPage() {
 
       {/* Tab: Disponibilidad por instructor */}
       {tab === 'by-instructor' && (
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">Ver horarios libres</h3>
-            <p className="mb-4 text-sm text-slate-600">Elige un instructor para ver en qué días y horas tiene disponibilidad para inscribir a un nuevo estudiante.</p>
-            <div className="flex flex-wrap items-end gap-4">
-              <div className="min-w-[240px]">
+        <div className="space-y-4 sm:space-y-6">
+          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+            <h3 className="mb-2 sm:mb-3 text-xs sm:text-sm font-semibold uppercase tracking-wider text-slate-500">Ver horarios libres</h3>
+            <p className="mb-4 text-xs sm:text-sm text-slate-600 leading-relaxed">Elige un instructor para ver en qué días y horas tiene disponibilidad para inscribir a un nuevo estudiante.</p>
+            <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-end gap-4">
+              <div className="w-full sm:min-w-[240px] sm:flex-1 sm:max-w-md">
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Instructor</label>
                 <select
                   value={availabilityInstructorId}
                   onChange={(e) => setAvailabilityInstructorId(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                  className="w-full min-h-[44px] rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-base sm:text-sm text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
                 >
                   <option value="">Seleccionar instructor</option>
                   {instructors.map((i) => (
@@ -397,103 +397,119 @@ export default function AdminSchedulesPage() {
           )}
 
           {!availabilityLoading && availabilityInstructorId && availability && (
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm overflow-x-auto">
-              <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
-                <div className="flex items-center gap-3">
-                  <h3 className="font-semibold text-slate-800">Calendario del instructor</h3>
-                  <nav className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50/80 p-1">
-                    <button
-                      type="button"
-                      onClick={() => setWeekOffset((o) => o - 1)}
-                      className="rounded-md p-2 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
-                      title="Semana anterior"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                    </button>
-                    <span className="min-w-[180px] px-3 py-1.5 text-sm font-medium text-slate-700 text-center">{weekLabel || 'Semana'}</span>
-                    <button
-                      type="button"
-                      onClick={() => setWeekOffset((o) => o + 1)}
-                      className="rounded-md p-2 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
-                      title="Semana siguiente"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-                    </button>
-                  </nav>
-                  {weekOffset !== 0 && (
-                    <button type="button" onClick={() => setWeekOffset(0)} className="text-sm text-teal-600 hover:underline">
-                      Hoy
-                    </button>
-                  )}
+            <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-3 sm:p-6 shadow-sm w-full min-w-0">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between mb-4 sm:mb-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center min-w-0">
+                  <h3 className="font-semibold text-slate-800 text-sm sm:text-base shrink-0">Calendario del instructor</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <nav className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-slate-50/80 p-1 touch-manipulation">
+                      <button
+                        type="button"
+                        onClick={() => setWeekOffset((o) => o - 1)}
+                        className="rounded-md p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
+                        title="Semana anterior"
+                        aria-label="Semana anterior"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                      </button>
+                      <span className="min-w-[min(100%,11rem)] px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-700 text-center tabular-nums">{weekLabel || 'Semana'}</span>
+                      <button
+                        type="button"
+                        onClick={() => setWeekOffset((o) => o + 1)}
+                        className="rounded-md p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
+                        title="Semana siguiente"
+                        aria-label="Semana siguiente"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                      </button>
+                    </nav>
+                    {weekOffset !== 0 && (
+                      <button type="button" onClick={() => setWeekOffset(0)} className="text-sm font-medium text-teal-600 hover:underline touch-manipulation py-2 px-1">
+                        Hoy
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600">
-                  <span className="inline-flex items-center gap-2">
-                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-emerald-500 text-white text-xs font-medium shadow-sm">✓</span>
-                    Libre
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] sm:text-sm text-slate-600">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-flex h-6 w-6 sm:h-7 sm:w-7 shrink-0 items-center justify-center rounded-md bg-emerald-500 text-white text-[10px] sm:text-xs font-medium shadow-sm">✓</span>
+                    <span className="leading-tight">Libre</span>
                   </span>
-                  <span className="inline-flex items-center gap-2">
-                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-red-500 text-white text-xs font-medium shadow-sm">·</span>
-                    Semana 1 (inicio prácticas)
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-flex h-6 w-6 sm:h-7 sm:w-7 shrink-0 items-center justify-center rounded-md bg-red-500 text-white text-[10px] sm:text-xs font-medium shadow-sm">·</span>
+                    <span className="leading-tight max-w-[10rem] sm:max-w-none">Semana 1</span>
                   </span>
-                  <span className="inline-flex items-center gap-2">
-                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-amber-500 text-white text-xs font-medium shadow-sm">·</span>
-                    Acabando clase
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-flex h-6 w-6 sm:h-7 sm:w-7 shrink-0 items-center justify-center rounded-md bg-amber-500 text-white text-[10px] sm:text-xs font-medium shadow-sm">·</span>
+                    <span className="leading-tight">Acabando clase</span>
                   </span>
                 </div>
               </div>
-              <div className="min-w-[640px]">
-                <table className="w-full text-sm border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200 bg-slate-50/80">
-                      <th className="w-14 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 sticky left-0 bg-slate-50 z-10">Hora</th>
-                      {displayedWeekDates.map((d) => (
-                        <th key={d.value} className="py-2 text-center text-xs font-semibold text-slate-600 w-[72px]" title={d.label}>
-                          <span className="block">{d.short}</span>
-                          <span className="block text-[10px] font-normal text-slate-400">{d.date.getDate()}/{d.date.getMonth() + 1}</span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {HOURS.map((hour) => (
-                      <tr key={hour} className="border-b border-slate-100 last:border-0">
-                        <td className="py-2 pr-3 text-slate-500 font-medium text-xs sticky left-0 bg-white z-10">{hour}</td>
-                        {displayedWeekDates.map((dayInfo, colIndex) => {
-                          const d = dayInfo.date;
-                          const dateISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                          const key = `${dateISO}-${hour}`;
-                          const isOccupied = occupiedSet.has(key);
-                          const occupiedLabel = occupiedLabelByKey.get(key);
-                          const status = occupiedStatusByKey.get(key);
-                          const bg = !isOccupied ? 'bg-emerald-500' : status === 'occupied_ending' ? 'bg-amber-500' : 'bg-red-500';
-                          return (
-                            <td key={dayInfo.value} className="p-1">
-                              <div
-                                className={`min-h-9 rounded-lg flex items-center justify-center text-xs font-medium shadow-sm px-1 py-1.5 text-center text-white ${bg}`}
-                                title={isOccupied ? (occupiedLabel || '— (ocupado)') : 'Libre'}
-                              >
-                                {isOccupied ? (occupiedLabel || '— (ocupado)') : '✓'}
-                              </div>
-                            </td>
-                          );
-                        })}
+              <p className="mb-2 flex items-center gap-1.5 text-[11px] text-slate-500 md:hidden">
+                <svg className="h-3.5 w-3.5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+                </svg>
+                Desliza horizontalmente para ver todos los días
+              </p>
+              <div className="overflow-x-auto overflow-y-visible -mx-3 px-3 sm:mx-0 sm:px-0 overscroll-x-contain [touch-action:pan-x] pb-1">
+                <div className="inline-block w-full min-w-[36rem] sm:min-w-[640px] align-top">
+                  <table className="w-full text-xs sm:text-sm border-collapse table-fixed">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50/80">
+                        <th className="w-11 sm:w-14 py-2 sm:py-3 pl-1 pr-1 sm:pr-2 text-left text-[10px] sm:text-xs font-semibold uppercase tracking-wider text-slate-500 sticky left-0 z-20 bg-slate-50 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">Hora</th>
+                        {displayedWeekDates.map((d) => (
+                          <th key={d.value} className="py-1.5 sm:py-2 px-0.5 text-center text-[10px] sm:text-xs font-semibold text-slate-600" title={d.label}>
+                            <span className="block truncate">{d.short}</span>
+                            <span className="block text-[9px] sm:text-[10px] font-normal text-slate-400 tabular-nums">{d.date.getDate()}/{d.date.getMonth() + 1}</span>
+                          </th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {HOURS.map((hour) => (
+                        <tr key={hour} className="border-b border-slate-100 last:border-0">
+                          <td className="py-1.5 sm:py-2 pr-1 sm:pr-3 text-slate-500 font-medium text-[10px] sm:text-xs tabular-nums sticky left-0 z-10 bg-white shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)]">{hour}</td>
+                          {displayedWeekDates.map((dayInfo) => {
+                            const d = dayInfo.date;
+                            const dateISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                            const key = `${dateISO}-${hour}`;
+                            const isOccupied = occupiedSet.has(key);
+                            const occupiedLabel = occupiedLabelByKey.get(key);
+                            const status = occupiedStatusByKey.get(key);
+                            const bg = !isOccupied ? 'bg-emerald-500' : status === 'occupied_ending' ? 'bg-amber-500' : 'bg-red-500';
+                            return (
+                              <td key={dayInfo.value} className="p-0.5 sm:p-1 align-top">
+                                <div
+                                  className={`min-h-[2.25rem] sm:min-h-9 rounded-md sm:rounded-lg flex items-center justify-center text-[9px] sm:text-xs font-medium shadow-sm px-0.5 py-1 sm:px-1 sm:py-1.5 text-center text-white leading-tight ${bg}`}
+                                  title={isOccupied ? (occupiedLabel || '— (ocupado)') : 'Libre'}
+                                >
+                                  {isOccupied ? (
+                                    <span className="line-clamp-3 break-words hyphens-auto">{occupiedLabel || '—'}</span>
+                                  ) : (
+                                    '✓'
+                                  )}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-              <p className="mt-3 text-xs text-slate-500">Solo se muestran los alumnos en las fechas de su periodo de prácticas (inicio y término). Usa las flechas para cambiar de semana.</p>
+              <p className="mt-3 text-[11px] sm:text-xs text-slate-500 leading-relaxed">Solo se muestran los alumnos en las fechas de su periodo de prácticas. Usa las flechas para cambiar de semana.</p>
             </div>
           )}
 
           {!availabilityLoading && availabilityInstructorId && !availability && (
-            <div className="rounded-2xl border border-slate-200 bg-white py-12 text-center text-slate-500">
+            <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white py-10 sm:py-12 px-4 text-center text-sm text-slate-500">
               No se pudo cargar la disponibilidad. Revisa que el instructor exista.
             </div>
           )}
 
           {!availabilityLoading && !availabilityInstructorId && (
-            <div className="rounded-2xl border border-slate-200 bg-white py-12 text-center text-slate-500">
+            <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white py-10 sm:py-12 px-4 text-center text-sm text-slate-500">
               Selecciona un instructor para ver sus horarios libres.
             </div>
           )}
@@ -502,24 +518,25 @@ export default function AdminSchedulesPage() {
 
       {/* Tab: Horarios por curso */}
       {tab === 'by-course' && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6">
           {/* Navegación semanal (mismo estilo que Disponibilidad por instructor) */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">Semana a consultar</h3>
-            <p className="mb-4 text-sm text-slate-600">
+          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+            <h3 className="mb-2 sm:mb-3 text-xs sm:text-sm font-semibold uppercase tracking-wider text-slate-500">Semana a consultar</h3>
+            <p className="mb-4 text-xs sm:text-sm text-slate-600 leading-relaxed">
               La grilla cruza la semana con las mismas reglas que el calendario del instructor: alumnos visibles solo en su periodo de prácticas.
             </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <nav className="flex items-center gap-1 rounded-xl border border-slate-200 bg-slate-50/80 p-1.5">
+            <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-3">
+              <nav className="inline-flex w-full sm:w-auto items-center justify-center gap-0.5 rounded-xl border border-slate-200 bg-slate-50/80 p-1.5 touch-manipulation">
                 <button
                   type="button"
                   onClick={() => setWeekOffsetByCourse((o) => o - 1)}
-                  className="rounded-lg p-2.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
+                  className="rounded-lg p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
                   title="Semana anterior"
+                  aria-label="Semana anterior"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
                 </button>
-                <span className="min-w-[200px] px-4 py-2 text-sm font-semibold text-slate-800 text-center">
+                <span className="min-w-0 flex-1 sm:flex-none sm:min-w-[11rem] px-2 sm:px-4 py-2 text-xs sm:text-sm font-semibold text-slate-800 text-center leading-snug">
                   {(() => {
                     const { weekStart, weekEnd } = getWeekStartEndByCourse(weekOffsetByCourse);
                     const d1 = new Date(weekStart + 'T12:00:00');
@@ -531,8 +548,9 @@ export default function AdminSchedulesPage() {
                 <button
                   type="button"
                   onClick={() => setWeekOffsetByCourse((o) => o + 1)}
-                  className="rounded-lg p-2.5 text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
+                  className="rounded-lg p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-600 hover:bg-white hover:text-slate-900 hover:shadow-sm transition-all"
                   title="Semana siguiente"
+                  aria-label="Semana siguiente"
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                 </button>
@@ -541,7 +559,7 @@ export default function AdminSchedulesPage() {
                 <button
                   type="button"
                   onClick={() => setWeekOffsetByCourse(0)}
-                  className="rounded-xl border border-teal-200 bg-teal-50 px-4 py-2.5 text-sm font-medium text-teal-700 hover:bg-teal-100 transition-colors"
+                  className="w-full sm:w-auto min-h-[44px] rounded-xl border border-teal-200 bg-teal-50 px-4 py-2.5 text-sm font-medium text-teal-700 hover:bg-teal-100 transition-colors touch-manipulation"
                 >
                   Hoy
                 </button>
@@ -550,15 +568,15 @@ export default function AdminSchedulesPage() {
           </div>
 
           {/* Filtros: curso, instructor, estado */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500">Filtros</h3>
+          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+            <h3 className="mb-3 sm:mb-4 text-xs sm:text-sm font-semibold uppercase tracking-wider text-slate-500">Filtros</h3>
             <div className="flex flex-wrap items-end gap-4">
               <div className="w-full sm:min-w-[180px] sm:w-auto">
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Curso</label>
                 <select
                   value={filterCohortId}
                   onChange={(e) => setFilterCohortId(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                  className="w-full min-h-[44px] rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-base sm:text-sm text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
                 >
                   <option value="">Todos los cursos</option>
                   {cohorts.map((c) => (
@@ -573,7 +591,7 @@ export default function AdminSchedulesPage() {
                 <select
                   value={filterInstructorId}
                   onChange={(e) => setFilterInstructorId(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                  className="w-full min-h-[44px] rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-base sm:text-sm text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
                 >
                   <option value="">Todos los instructores</option>
                   {instructors.map((i) => (
@@ -586,7 +604,7 @@ export default function AdminSchedulesPage() {
                 <select
                   value={filterStatus}
                   onChange={(e) => setFilterStatus(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
+                  className="w-full min-h-[44px] rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5 text-base sm:text-sm text-slate-900 transition-colors focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20"
                 >
                   <option value="">Todos</option>
                   <option value="disponible">Disponible</option>
@@ -598,7 +616,7 @@ export default function AdminSchedulesPage() {
                 <button
                   type="button"
                   onClick={() => { setFilterCohortId(''); setFilterInstructorId(''); setFilterStatus(''); }}
-                  className="min-h-[44px] rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                  className="w-full sm:w-auto min-h-[44px] rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50 touch-manipulation"
                 >
                   Limpiar filtros
                 </button>
@@ -608,34 +626,30 @@ export default function AdminSchedulesPage() {
 
           {/* Calendario agregado */}
           {calendarLoading ? (
-            <div className="flex flex-col items-center justify-center gap-3 py-20 rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-col items-center justify-center gap-3 py-16 sm:py-20 rounded-xl sm:rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="h-10 w-10 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
               <p className="text-sm text-slate-500">Cargando calendario…</p>
             </div>
           ) : scheduleCalendar && scheduleCalendar.weekDates.length > 0 ? (
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-6 shadow-md shadow-slate-200/50 overflow-x-auto">
-              <div className="flex flex-wrap items-start justify-between gap-4 mb-5">
-                <div>
-                  <h3 className="font-semibold text-slate-900 text-lg tracking-tight">Disponibilidad de instructores</h3>
-                  <p className="text-sm text-slate-600 mt-1 max-w-2xl">
-                    Vista semanal por franja: colores equilibrados (ni chillones ni apagados) y celdas tipo tarjeta para leer rápido quién tiene cupo.
+            <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-3 sm:p-6 shadow-md shadow-slate-200/50 w-full min-w-0 max-w-full">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between mb-4 sm:mb-5">
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-slate-900 text-base sm:text-lg tracking-tight">Disponibilidad de instructores</h3>
+                  <p className="text-xs sm:text-sm text-slate-600 mt-1 max-w-2xl leading-relaxed">
+                    Tres estados: <strong className="text-emerald-700">libre</strong> para inscribir, <strong className="text-rose-700">ocupado</strong> con alumno, <strong className="text-amber-800">acabando clase</strong> en la última etapa de prácticas.
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-700">
-                  <span className="inline-flex items-center gap-2 rounded-lg bg-slate-100 px-2.5 py-1.5 ring-1 ring-slate-200/80">
-                    <span className="h-2 w-2 rounded-full bg-slate-400" />
-                    Sin horario
+                <div className="flex flex-wrap items-center gap-2 text-[10px] sm:text-[11px] font-semibold text-slate-700 shrink-0">
+                  <span className="inline-flex items-center gap-1.5 sm:gap-2 rounded-lg bg-emerald-100 px-2 sm:px-3 py-1.5 ring-1 ring-emerald-300/70">
+                    <span className="h-2 w-2 sm:h-2.5 sm:w-2.5 rounded-full bg-emerald-500 shadow-sm shrink-0" />
+                    Libre
                   </span>
-                  <span className="inline-flex items-center gap-2 rounded-lg bg-emerald-100/90 px-2.5 py-1.5 ring-1 ring-emerald-300/60">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                    Cupo libre
-                  </span>
-                  <span className="inline-flex items-center gap-2 rounded-lg bg-rose-100/90 px-2.5 py-1.5 ring-1 ring-rose-300/60">
-                    <span className="h-2 w-2 rounded-full bg-rose-500" />
+                  <span className="inline-flex items-center gap-1.5 sm:gap-2 rounded-lg bg-rose-100 px-2 sm:px-3 py-1.5 ring-1 ring-rose-300/70">
+                    <span className="h-2 w-2 sm:h-2.5 sm:w-2.5 rounded-full bg-rose-500 shadow-sm shrink-0" />
                     Ocupado
                   </span>
-                  <span className="inline-flex items-center gap-2 rounded-lg bg-amber-100/90 px-2.5 py-1.5 ring-1 ring-amber-300/60">
-                    <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  <span className="inline-flex items-center gap-1.5 sm:gap-2 rounded-lg bg-amber-100 px-2 sm:px-3 py-1.5 ring-1 ring-amber-300/70">
+                    <span className="h-2 w-2 sm:h-2.5 sm:w-2.5 rounded-full bg-amber-500 shadow-sm shrink-0" />
                     Acabando clase
                   </span>
                 </div>
@@ -657,8 +671,8 @@ export default function AdminSchedulesPage() {
                   else if (o) fullCells += 1;
                 }
                 return (
-                  <p className="text-sm text-slate-600 mb-4">
-                    <span className="font-semibold text-slate-800">{cellsWithSlot}</span> celdas con horario definido esta semana
+                  <p className="text-xs sm:text-sm text-slate-600 mb-3 sm:mb-4 leading-relaxed">
+                    <span className="font-semibold text-slate-800">{cellsWithSlot}</span> celdas con actividad esta semana
                     {filterStatus && (
                       <span className="text-slate-500">
                         {' '}
@@ -676,11 +690,18 @@ export default function AdminSchedulesPage() {
                 );
               })()}
 
-              <div className="min-w-[720px] rounded-xl bg-slate-200/35 p-2 sm:p-2.5">
-                <table className="w-full text-sm border-separate border-spacing-2 table-fixed">
+              <p className="mb-2 flex items-center gap-1.5 text-[11px] text-slate-500 md:hidden">
+                <svg className="h-3.5 w-3.5 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
+                </svg>
+                Desliza horizontalmente para ver todos los días
+              </p>
+              <div className="overflow-x-auto overflow-y-visible -mx-3 px-3 sm:mx-0 sm:px-0 overscroll-x-contain [touch-action:pan-x] pb-1 rounded-xl bg-slate-200/35 sm:bg-transparent">
+                <div className="inline-block min-w-[34rem] sm:min-w-[720px] w-full align-top rounded-xl bg-slate-200/35 p-1.5 sm:p-2.5">
+                  <table className="w-full text-[10px] sm:text-sm border-separate border-spacing-1 sm:border-spacing-2 table-fixed">
                   <thead>
                     <tr>
-                      <th className="w-[56px] rounded-lg bg-slate-700 py-3 pl-2 pr-1 text-left text-[10px] font-bold uppercase tracking-widest text-slate-200 sticky left-0 z-20 shadow-lg shadow-slate-900/15 ring-1 ring-slate-600/50">
+                      <th className="w-[44px] sm:w-[56px] rounded-md sm:rounded-lg bg-slate-700 py-2 sm:py-3 pl-1 pr-0.5 sm:pr-1 text-left text-[8px] sm:text-[10px] font-bold uppercase tracking-wide sm:tracking-widest text-slate-200 sticky left-0 z-20 shadow-lg shadow-slate-900/15 ring-1 ring-slate-600/50">
                         Hora
                       </th>
                       {scheduleCalendar.weekDates.map((iso) => {
@@ -689,11 +710,11 @@ export default function AdminSchedulesPage() {
                         return (
                           <th
                             key={iso}
-                            className="rounded-lg bg-gradient-to-b from-slate-700 to-slate-800 py-3 px-1.5 text-center text-xs font-semibold text-white shadow-md shadow-slate-900/20 ring-1 ring-slate-600/40 min-w-[104px]"
+                            className="rounded-md sm:rounded-lg bg-gradient-to-b from-slate-700 to-slate-800 py-2 sm:py-3 px-0.5 sm:px-1.5 text-center text-[10px] sm:text-xs font-semibold text-white shadow-md shadow-slate-900/20 ring-1 ring-slate-600/40 min-w-[68px] sm:min-w-[104px]"
                             title={iso}
                           >
-                            <span className="block text-white">{short}</span>
-                            <span className="block text-[10px] font-medium text-slate-300 tabular-nums mt-1">
+                            <span className="block text-white truncate">{short}</span>
+                            <span className="block text-[8px] sm:text-[10px] font-medium text-slate-300 tabular-nums mt-0.5 sm:mt-1">
                               {d.getDate()}/{d.getMonth() + 1}
                             </span>
                           </th>
@@ -704,7 +725,7 @@ export default function AdminSchedulesPage() {
                   <tbody>
                     {scheduleCalendar.hours.map((hour) => (
                       <tr key={hour}>
-                        <td className="rounded-lg bg-white py-2.5 pl-2 pr-1 text-center text-slate-700 font-bold text-[11px] tabular-nums sticky left-0 z-10 shadow-md shadow-slate-300/30 ring-1 ring-slate-200">
+                        <td className="rounded-md sm:rounded-lg bg-white py-2 sm:py-2.5 pl-1 pr-0.5 sm:pr-1 text-center text-slate-700 font-bold text-[9px] sm:text-[11px] tabular-nums sticky left-0 z-10 shadow-md shadow-slate-300/30 ring-1 ring-slate-200">
                           {hour}
                         </td>
                         {scheduleCalendar.weekDates.map((dateStr) => {
@@ -728,27 +749,28 @@ export default function AdminSchedulesPage() {
                           return (
                             <td key={`${dateStr}-${hour}`} className="p-0 align-top">
                               <div
-                                className={`rounded-xl min-h-[58px] overflow-hidden bg-white ring-1 ring-slate-300/80 shadow-sm transition-all hover:shadow-md hover:ring-slate-400/60 ${
+                                className={`rounded-md sm:rounded-xl min-h-[52px] sm:min-h-[58px] overflow-hidden bg-white ring-1 ring-slate-300/80 shadow-sm transition-all sm:hover:shadow-md sm:hover:ring-slate-400/60 ${
                                   dimmed ? 'opacity-[0.42] saturate-50' : ''
                                 }`}
                                 title={titleParts.length ? titleParts.join(' | ') : undefined}
                               >
                                 {!cell.hasSlot ? (
-                                  <div className="min-h-[58px] flex flex-col items-center justify-center gap-1 bg-gradient-to-b from-slate-50 to-slate-100/80 text-slate-400">
-                                    <span className="text-[10px] font-semibold tracking-wide text-slate-400">—</span>
-                                    <span className="h-px w-6 bg-slate-300/60 rounded-full" aria-hidden />
+                                  <div className="min-h-[52px] sm:min-h-[58px] flex items-center justify-center bg-white">
+                                    <span className="text-slate-300 text-[10px] sm:text-xs" aria-hidden>
+                                      ·
+                                    </span>
                                   </div>
                                 ) : (
-                                  <div className="flex flex-col min-h-[58px] gap-1 p-1">
+                                  <div className="flex flex-col min-h-[52px] sm:min-h-[58px] gap-0.5 sm:gap-1 p-0.5 sm:p-1">
                                     {cell.free.length > 0 && (
-                                      <div className="rounded-lg border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-teal-50/80 to-emerald-100/50 px-2 py-1.5 space-y-1 shadow-sm">
-                                        <p className="text-[9px] font-extrabold uppercase tracking-wide text-emerald-800">
+                                      <div className="rounded-md sm:rounded-lg border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-teal-50/80 to-emerald-100/50 px-1.5 sm:px-2 py-1 sm:py-1.5 space-y-0.5 sm:space-y-1 shadow-sm">
+                                        <p className="text-[8px] sm:text-[9px] font-extrabold uppercase tracking-wide text-emerald-800">
                                           Libre · {cell.free.length}
                                         </p>
-                                        {cell.free.map((f) => (
+                                        {cell.free.map((f, fi) => (
                                           <p
-                                            key={f.instructorId}
-                                            className="text-[10px] font-semibold leading-snug text-emerald-950 truncate border-l-2 border-emerald-500 pl-1.5"
+                                            key={`${f.instructorId}-${fi}`}
+                                            className="text-[8px] sm:text-[10px] font-semibold leading-snug text-emerald-950 line-clamp-2 sm:truncate border-l-2 border-emerald-500 pl-1 sm:pl-1.5"
                                             title={f.instructorName}
                                           >
                                             {f.instructorName}
@@ -757,21 +779,21 @@ export default function AdminSchedulesPage() {
                                       </div>
                                     )}
                                     {cell.occupied.length > 0 && (
-                                      <div className="flex flex-col gap-1">
+                                      <div className="flex flex-col gap-0.5 sm:gap-1">
                                         {cell.occupied.map((o) => {
                                           const ending = o.status === 'occupied_ending';
                                           const names = o.student_names?.length ? o.student_names.join(', ') : '';
                                           return (
                                             <div
                                               key={o.instructorId}
-                                              className={`rounded-lg border-y border-r px-2 py-1.5 shadow-sm ${
+                                              className={`rounded-md sm:rounded-lg border-y border-r px-1.5 sm:px-2 py-1 sm:py-1.5 shadow-sm ${
                                                 ending
-                                                  ? 'border-amber-300/90 border-l-4 border-l-amber-500 bg-gradient-to-br from-amber-100 to-amber-50'
-                                                  : 'border-rose-300/90 border-l-4 border-l-rose-500 bg-gradient-to-br from-rose-100 to-rose-50'
+                                                  ? 'border-amber-300/90 border-l-[3px] sm:border-l-4 border-l-amber-500 bg-gradient-to-br from-amber-100 to-amber-50'
+                                                  : 'border-rose-300/90 border-l-[3px] sm:border-l-4 border-l-rose-500 bg-gradient-to-br from-rose-100 to-rose-50'
                                               }`}
                                             >
                                               <p
-                                                className="text-[9px] font-extrabold uppercase tracking-wide leading-tight truncate text-slate-900"
+                                                className="text-[8px] sm:text-[9px] font-extrabold uppercase tracking-wide leading-tight line-clamp-2 sm:truncate text-slate-900"
                                                 title={o.instructorName}
                                               >
                                                 {o.instructorName}
@@ -781,7 +803,7 @@ export default function AdminSchedulesPage() {
                                               </p>
                                               {names ? (
                                                 <p
-                                                  className="text-[9px] font-semibold normal-case text-slate-700 mt-0.5 line-clamp-2"
+                                                  className="text-[8px] sm:text-[9px] font-semibold normal-case text-slate-700 mt-0.5 line-clamp-2"
                                                   title={names}
                                                 >
                                                   {names}
@@ -802,22 +824,23 @@ export default function AdminSchedulesPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </div>
 
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200/80 pt-4">
-                <p className="text-xs text-slate-500">
-                  Pasa el cursor sobre una celda para ver el texto completo. El filtro «Estado» atenúa suavemente las celdas que no coinciden.
+              <div className="mt-4 sm:mt-5 flex flex-col-reverse sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-3 border-t border-slate-200/80 pt-4">
+                <p className="text-[11px] sm:text-xs text-slate-500 leading-relaxed">
+                  Mantén pulsada una celda o pasa el cursor para ver el texto completo. El filtro «Estado» atenúa las celdas que no coinciden.
                 </p>
                 <Link
                   href={`/admin/users${filterCohortId ? `?cohortId=${encodeURIComponent(filterCohortId)}` : ''}`}
-                  className="inline-flex items-center gap-2 rounded-xl border border-teal-200 bg-teal-600/95 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-teal-700 transition-colors"
+                  className="inline-flex w-full sm:w-auto min-h-[44px] items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-600/95 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-teal-700 transition-colors touch-manipulation"
                 >
                   Inscribir alumno
                 </Link>
               </div>
             </div>
           ) : (
-            <div className="rounded-2xl border border-slate-200 bg-white py-16 text-center text-slate-500 shadow-sm">
+            <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white py-12 sm:py-16 px-4 text-center text-sm text-slate-500 shadow-sm">
               No hay datos de calendario para esta semana o filtros. Prueba otra semana o amplía el curso/instructor.
             </div>
           )}
@@ -826,13 +849,13 @@ export default function AdminSchedulesPage() {
 
       {/* Modal alumno */}
       {studentsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => { setStudentsModal(null); setStudentsModalTimeLabel(null); }}>
-          <div className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-6 py-5">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-sm pb-[env(safe-area-inset-bottom)]" onClick={() => { setStudentsModal(null); setStudentsModalTimeLabel(null); }}>
+          <div className="w-full max-w-lg max-h-[92dvh] sm:max-h-[90vh] overflow-hidden rounded-t-2xl sm:rounded-2xl bg-white shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-4 sm:px-6 sm:py-5 shrink-0">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-900">Asignación</h3>
-                  <p className="mt-1 text-sm text-slate-600">
+                  <h3 className="text-base sm:text-lg font-semibold text-slate-900">Asignación</h3>
+                  <p className="mt-1 text-xs sm:text-sm text-slate-600 break-words">
                     {getCohortLabel(studentsModal)}
                     {studentsModalTimeLabel ? ` · ${studentsModalTimeLabel}` : ` · ${DAYS.find((d) => d.value === studentsModal.day_of_week)?.label} ${formatTime(studentsModal)}`}
                   </p>
@@ -847,7 +870,7 @@ export default function AdminSchedulesPage() {
                 </button>
               </div>
             </div>
-            <div className="max-h-[70vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6">
               {studentsLoading ? (
                 <div className="flex justify-center py-8">
                   <div className="h-6 w-6 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
@@ -880,13 +903,13 @@ export default function AdminSchedulesPage() {
                 </div>
               )}
             </div>
-            <div className="border-t border-slate-100 px-6 py-4">
+            <div className="border-t border-slate-100 px-4 py-3 sm:px-6 sm:py-4 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
               <button
                 type="button"
-onClick={() => { setStudentsModal(null); setStudentsModalTimeLabel(null); }}
-              className="w-full rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-            >
-              Cerrar
+                onClick={() => { setStudentsModal(null); setStudentsModalTimeLabel(null); }}
+                className="w-full min-h-[44px] rounded-xl border border-slate-200 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 touch-manipulation"
+              >
+                Cerrar
               </button>
             </div>
           </div>
@@ -895,8 +918,8 @@ onClick={() => { setStudentsModal(null); setStudentsModalTimeLabel(null); }}
 
       {/* Modal Cambiar horario */}
       {changeScheduleStudent && studentsModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm overflow-y-auto" onClick={() => setChangeScheduleStudent(null)}>
-          <div className="w-full max-w-md my-auto overflow-hidden rounded-2xl bg-white shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-sm overflow-y-auto pb-[env(safe-area-inset-bottom)]" onClick={() => setChangeScheduleStudent(null)}>
+          <div className="w-full max-w-md my-auto sm:my-4 overflow-hidden rounded-t-2xl sm:rounded-2xl bg-white shadow-2xl max-h-[min(92dvh,720px)] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="border-b border-slate-100 bg-slate-50/80 px-4 sm:px-6 py-4 shrink-0">
               <h3 className="text-lg font-semibold text-slate-900">Cambiar horario</h3>
               <p className="text-sm text-slate-600 mt-0.5">{changeScheduleStudent.full_name}</p>
@@ -948,19 +971,19 @@ onClick={() => { setStudentsModal(null); setStudentsModalTimeLabel(null); }}
                 )}
               </div>
             </div>
-            <div className="flex flex-col-reverse sm:flex-row gap-2 border-t border-slate-100 px-4 sm:px-6 py-4 shrink-0">
+            <div className="flex flex-col-reverse sm:flex-row gap-2 border-t border-slate-100 px-4 sm:px-6 py-3 sm:py-4 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
               <button
                 type="button"
                 onClick={submitChangeSchedule}
                 disabled={!changeSlot || changeScheduleSubmitting}
-                className="flex-1 min-h-[44px] rounded-xl bg-teal-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-700 disabled:opacity-50 disabled:pointer-events-none"
+                className="flex-1 min-h-[44px] rounded-xl bg-teal-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-700 disabled:opacity-50 disabled:pointer-events-none touch-manipulation"
               >
                 {changeScheduleSubmitting ? 'Guardando...' : 'Guardar'}
               </button>
               <button
                 type="button"
                 onClick={() => setChangeScheduleStudent(null)}
-                className="min-h-[44px] rounded-xl border border-slate-200 py-2.5 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="min-h-[44px] rounded-xl border border-slate-200 py-2.5 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 touch-manipulation"
               >
                 Cancelar
               </button>

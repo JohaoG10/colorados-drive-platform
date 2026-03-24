@@ -896,9 +896,13 @@ export async function getScheduleOverviewForWeek(
   return result;
 }
 
+/** Fin del horario laboral estándar para instructores (22:00 = 10 p. m.). Fuera de esto no se asume disponibilidad implícita. */
+const DEFAULT_INSTRUCTOR_DAY_END_HOUR = '22:00';
+
 export interface AdminScheduleCalendarCell {
   hasSlot: boolean;
-  free: { instructorId: string; instructorName: string }[];
+  /** implicitAvailability = true: no hay fila en course_schedules pero el instructor se considera disponible (6:00–22:00). */
+  free: { instructorId: string; instructorName: string; implicitAvailability?: boolean }[];
   occupied: {
     instructorId: string;
     instructorName: string;
@@ -930,7 +934,7 @@ export async function getAdminScheduleCalendarForWeek(
 
   let query = supabaseAdmin
     .from('course_schedules')
-    .select('instructor_id, instructors(id, full_name)')
+    .select('instructor_id, day_of_week, start_time, instructors(id, full_name)')
     .not('instructor_id', 'is', null);
   if (cohortId) query = query.eq('cohort_id', cohortId);
   if (instructorId) query = query.eq('instructor_id', instructorId);
@@ -939,15 +943,32 @@ export async function getAdminScheduleCalendarForWeek(
 
   const allInstructorIds = new Set<string>();
   const instIdToInfo = new Map<string, { instructorId: string; instructorName: string }>();
+  /** Combinaciones (instructor + día semana + hora) que ya tienen franja explícita en course_schedules (en el alcance del filtro de cohorte). */
+  const explicitSlotKeys = new Set<string>();
+
   for (const r of rows || []) {
     const instId = String((r as { instructor_id: unknown }).instructor_id ?? '');
     if (!instId) continue;
     allInstructorIds.add(instId);
+    const dow = Number((r as { day_of_week: number }).day_of_week);
+    const st = normalizeTimeToHHmm((r as { start_time: string }).start_time);
+    explicitSlotKeys.add(`${instId}|${dow}|${st}`);
     if (!instIdToInfo.has(instId)) {
       const instr = (r as { instructors?: { full_name?: string } | { full_name?: string }[] }).instructors;
       const single = Array.isArray(instr) ? instr[0] : instr;
       const name = (single as { full_name?: string } | null)?.full_name ?? '—';
       instIdToInfo.set(instId, { instructorId: instId, instructorName: name });
+    }
+  }
+
+  if (instructorId && !allInstructorIds.has(instructorId)) {
+    const { data: insRow } = await supabaseAdmin.from('instructors').select('id, full_name').eq('id', instructorId).maybeSingle();
+    if (insRow) {
+      allInstructorIds.add(instructorId);
+      instIdToInfo.set(instructorId, {
+        instructorId,
+        instructorName: (insRow as { full_name?: string }).full_name ?? '—',
+      });
     }
   }
 
@@ -996,6 +1017,35 @@ export async function getAdminScheduleCalendarForWeek(
         student_names: o.student_names ?? [],
         status: o.status,
       });
+    }
+  }
+
+  /**
+   * Disponibilidad implícita 06:00–22:00 (como regla de negocio histórica del proyecto: instructores no guardan fila por cada hora).
+   * Si no existe course_schedules para ese día/hora, igual se muestra cupo libre salvo que ya venga ocupado por alumno.
+   */
+  const hoursImplicitDay = HOURS_6_TO_23.filter((h) => h <= DEFAULT_INSTRUCTOR_DAY_END_HOUR);
+  for (const instId of allInstructorIds) {
+    const info = instIdToInfo.get(instId);
+    if (!info) continue;
+    for (const date of weekDates) {
+      const dow = getDayOfWeek(parseLocalDate(date));
+      for (const hour of hoursImplicitDay) {
+        const t = normalizeTimeToHHmm(hour);
+        if (explicitSlotKeys.has(`${instId}|${dow}|${t}`)) continue;
+        const k = calendarCellKey(date, t);
+        const c = cells[k];
+        if (!c) continue;
+        const already =
+          c.free.some((x) => x.instructorId === instId) || c.occupied.some((x) => x.instructorId === instId);
+        if (already) continue;
+        c.hasSlot = true;
+        c.free.push({
+          instructorId: instId,
+          instructorName: info.instructorName,
+          implicitAvailability: true,
+        });
+      }
     }
   }
 
