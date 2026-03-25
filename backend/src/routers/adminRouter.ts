@@ -1596,6 +1596,16 @@ router.post(
     body('concept').trim().notEmpty(),
     body('transferBank').optional().isIn([...cashService.TRANSFER_BANK_IDS]),
     body('notes').optional().trim().isString(),
+    body().custom((_value, { req }) => {
+      const body = req.body as { channel?: string; transferBank?: string };
+      if (body.channel === 'deposito') {
+        const bank = cashService.parseTransferBankId(body.transferBank);
+        if (!bank) {
+          throw new Error('Para depósito debe indicar el banco de acreditación (libro destino)');
+        }
+      }
+      return true;
+    }),
   ],
   async (req: AuthenticatedRequest, res: Response) => {
     const errors = validationResult(req);

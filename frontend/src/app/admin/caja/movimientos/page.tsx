@@ -108,6 +108,17 @@ function formatMoney(n: number) {
   return new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(n);
 }
 
+/** Etiqueta corta para cuenta/banco guardada en BD (coherente con reportes). */
+function shortFundsDestinationLabel(fd: string | null | undefined): string {
+  if (!fd) return '';
+  if (fd.includes('pichincha')) return 'Pichincha';
+  if (fd.includes('gye')) return 'Guayaquil';
+  if (fd.includes('pacifico')) return 'Pacífico';
+  if (fd.includes('internacional')) return 'Internacional';
+  if (fd.includes('efectivo')) return 'Efectivo';
+  return fd;
+}
+
 function formatDate(s: string) {
   return new Date(s).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' });
 }
@@ -144,7 +155,7 @@ function CajaMovimientosPageInner() {
   const [internalForm, setInternalForm] = useState({
     fromBook: 'escuela' as CashBook,
     toBook: 'dra' as CashBook,
-    channel: 'transferencia' as 'efectivo' | 'transferencia',
+    channel: 'transferencia' as 'efectivo' | 'transferencia' | 'deposito',
     transferBank: 'pichincha' as TransferBankId,
     amount: '',
     concept: '',
@@ -442,6 +453,10 @@ function CajaMovimientosPageInner() {
       setMessage('Monto inválido.');
       return;
     }
+    if (internalForm.channel === 'deposito' && !internalForm.transferBank) {
+      setMessage('Selecciona el banco donde se acreditó el depósito (libro destino).');
+      return;
+    }
     setSubmitting(true);
     setMessage('');
     try {
@@ -453,7 +468,9 @@ function CajaMovimientosPageInner() {
           fromBook: internalForm.fromBook,
           toBook: internalForm.toBook,
           channel: internalForm.channel,
-          ...(internalForm.channel === 'transferencia' ? { transferBank: internalForm.transferBank } : {}),
+          ...(internalForm.channel === 'transferencia' || internalForm.channel === 'deposito'
+            ? { transferBank: internalForm.transferBank }
+            : {}),
           amount,
           concept: internalForm.concept.trim(),
           notes: internalForm.notes.trim() || undefined,
@@ -786,7 +803,22 @@ function CajaMovimientosPageInner() {
                           </td>
                           <td className="hidden px-5 py-4 text-slate-600 sm:table-cell">
                             {t.type === 'internal_transfer'
-                              ? `${t.internal_from_book === 'escuela' ? 'Escuela' : 'DRA'} → ${t.internal_to_book === 'escuela' ? 'Escuela' : 'DRA'}`
+                              ? (() => {
+                                  const arrow = `${t.internal_from_book === 'escuela' ? 'Escuela' : 'DRA'} → ${
+                                    t.internal_to_book === 'escuela' ? 'Escuela' : 'DRA'
+                                  }`;
+                                  const ch =
+                                    t.internal_channel === 'deposito'
+                                      ? 'Depósito (efectivo→banco)'
+                                      : t.internal_channel === 'efectivo'
+                                        ? 'Efectivo'
+                                        : 'Transferencia';
+                                  const bank =
+                                    t.funds_destination && (t.internal_channel === 'deposito' || t.internal_channel === 'transferencia')
+                                      ? ` · ${shortFundsDestinationLabel(t.funds_destination)}`
+                                      : '';
+                                  return `${arrow} · ${ch}${bank}`;
+                                })()
                               : t.type === 'income'
                               ? t.income_type
                                 ? INCOME_TYPE_LABELS[t.income_type] ?? t.income_type
@@ -795,7 +827,11 @@ function CajaMovimientosPageInner() {
                               ? EXPENSE_CATEGORY_LABELS[t.category] ?? t.category
                               : '—'}
                           </td>
-                          <td className="hidden px-5 py-4 text-slate-600 md:table-cell">{PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method}</td>
+                          <td className="hidden px-5 py-4 text-slate-600 md:table-cell">
+                            {t.type === 'internal_transfer' && t.internal_channel === 'deposito'
+                              ? 'Depósito interno'
+                              : PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method}
+                          </td>
                           <td className="whitespace-nowrap px-5 py-4 text-right">
                             <span
                               className={`font-semibold tabular-nums ${
@@ -1269,7 +1305,8 @@ function CajaMovimientosPageInner() {
             <div className="w-full max-w-md rounded-2xl border border-slate-200/90 bg-white p-6 shadow-2xl lg:p-8 max-h-[90vh] overflow-y-auto">
               <h3 className="text-xl font-semibold text-slate-900">Transferencia entre cuentas</h3>
               <p className="mt-1 text-sm text-slate-500">
-                No se registra como ingreso/egreso operativo; ajusta balances entre Escuela y DRA. Requiere caja abierta en el libro de <strong>origen</strong>.
+                No se registra como ingreso/egreso operativo; ajusta balances entre Escuela y DRA. Requiere caja abierta en el libro de <strong>origen</strong>.{' '}
+                <strong>Depósito:</strong> el efectivo sale de la caja del origen y se acredita en la cuenta bancaria del destino (elige el banco del libro destino).
               </p>
               <form onSubmit={handleInternalSubmit} className="mt-6 space-y-4">
                 <div>
@@ -1299,12 +1336,16 @@ function CajaMovimientosPageInner() {
                   <select
                     value={internalForm.channel}
                     onChange={(e) =>
-                      setInternalForm((f) => ({ ...f, channel: e.target.value as 'efectivo' | 'transferencia' }))
+                      setInternalForm((f) => ({
+                        ...f,
+                        channel: e.target.value as 'efectivo' | 'transferencia' | 'deposito',
+                      }))
                     }
                     className="mt-1.5 w-full rounded-xl border border-slate-300 bg-slate-50/50 px-4 py-3 text-slate-900"
                   >
-                    <option value="transferencia">Transferencia</option>
-                    <option value="efectivo">Efectivo</option>
+                    <option value="transferencia">Transferencia (entre cuentas bancarias del origen)</option>
+                    <option value="efectivo">Efectivo (caja física entre libros)</option>
+                    <option value="deposito">Depósito (sale efectivo del origen → banco del destino)</option>
                   </select>
                 </div>
                 {internalForm.channel === 'transferencia' && (
@@ -1319,6 +1360,27 @@ function CajaMovimientosPageInner() {
                         setInternalForm((f) => ({ ...f, transferBank: e.target.value as TransferBankId }))
                       }
                       className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
+                    >
+                      {TRANSFER_BANK_OPTIONS.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {internalForm.channel === 'deposito' && (
+                  <div className="rounded-xl border border-amber-100 bg-amber-50/50 px-4 py-3">
+                    <label className="block text-sm font-medium text-slate-800">Banco de acreditación (libro destino)</label>
+                    <p className="mt-0.5 text-xs text-slate-600">
+                      Cuenta bancaria del libro <strong>{internalForm.toBook === 'dra' ? 'DRA' : 'Escuela'}</strong> donde ingresó el depósito. El efectivo se descuenta de la caja del origen.
+                    </p>
+                    <select
+                      value={internalForm.transferBank}
+                      onChange={(e) =>
+                        setInternalForm((f) => ({ ...f, transferBank: e.target.value as TransferBankId }))
+                      }
+                      className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
                     >
                       {TRANSFER_BANK_OPTIONS.map((o) => (
                         <option key={o.id} value={o.id}>

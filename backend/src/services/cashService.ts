@@ -58,7 +58,7 @@ export function parseTransferBankId(q: unknown): TransferBankId | undefined {
   return undefined;
 }
 
-export const INTERNAL_TRANSFER_CHANNELS = ['efectivo', 'transferencia'] as const;
+export const INTERNAL_TRANSFER_CHANNELS = ['efectivo', 'transferencia', 'deposito'] as const;
 export type InternalTransferChannel = (typeof INTERNAL_TRANSFER_CHANNELS)[number];
 
 export function parseCashBookQuery(q: unknown): CashBook | 'all' | undefined {
@@ -335,7 +335,12 @@ async function attachCreatorNames<T extends { created_by: string | null }>(trans
   }));
 }
 
-/** Cierre de caja según libro: Escuela solo efectivo + internas en efectivo; DRA todos los métodos + internas. */
+/**
+ * Cierre de caja según libro:
+ * - Escuela: solo efectivo operativo + internas en efectivo (caja↔caja) + internas depósito solo si sale de Escuela (resta caja física).
+ *   Si el destino es Escuela por depósito, no suma a efectivo (entra al banco, no al cajón).
+ * - DRA: todos los métodos operativos + todas las internas que afectan DRA (incl. depósito: sale o entra al libro).
+ */
 export async function computeBookClosing(sessionId: string): Promise<number> {
   const { data: sessionRaw, error: fetchErr } = await supabaseAdmin
     .from('cash_sessions')
@@ -366,9 +371,14 @@ export async function computeBookClosing(sessionId: string): Promise<number> {
     }
     for (const t of internalTxs) {
       const a = Number(t.amount);
-      if (t.internal_channel !== 'efectivo') continue;
-      if (t.internal_from_book === 'escuela') closing -= a;
-      if (t.internal_to_book === 'escuela') closing += a;
+      if (t.internal_channel === 'efectivo') {
+        if (t.internal_from_book === 'escuela') closing -= a;
+        if (t.internal_to_book === 'escuela') closing += a;
+      } else if (t.internal_channel === 'deposito') {
+        if (t.internal_from_book === 'escuela') closing -= a;
+        /* hacia Escuela: acreditación bancaria, no ingresa al efectivo físico de caja */
+      }
+      /* transferencia entre libros vía cuentas: no mueve caja física Escuela */
     }
     return closing;
   }
@@ -673,15 +683,30 @@ export async function addInternalTransfer(params: {
   if (!session) {
     throw new Error(`No hay caja abierta (${params.fromBook}) para la fecha indicada`);
   }
-  const payment_method: PaymentMethod = params.channel === 'efectivo' ? 'efectivo' : 'transferencia';
-  const funds_destination =
-    params.channel === 'efectivo'
-      ? validateFundsDestination('efectivo', params.fromBook, DEST_BY_BOOK[params.fromBook].efectivo)
-      : validateFundsDestination(
-          'transferencia',
-          params.fromBook,
-          fundsDestinationForTransferBank(params.fromBook, params.transferBank ?? 'pichincha')
-        );
+  let payment_method: PaymentMethod;
+  let funds_destination: FundsDestination | null;
+  if (params.channel === 'efectivo') {
+    payment_method = 'efectivo';
+    funds_destination = validateFundsDestination('efectivo', params.fromBook, DEST_BY_BOOK[params.fromBook].efectivo);
+  } else if (params.channel === 'transferencia') {
+    payment_method = 'transferencia';
+    funds_destination = validateFundsDestination(
+      'transferencia',
+      params.fromBook,
+      fundsDestinationForTransferBank(params.fromBook, params.transferBank ?? 'pichincha')
+    );
+  } else {
+    /* deposito: sale efectivo del origen; se registra cuenta bancaria del libro destino */
+    if (!params.transferBank) {
+      throw new Error('Indique el banco donde se acreditó el depósito (libro destino)');
+    }
+    payment_method = 'transferencia';
+    funds_destination = validateFundsDestination(
+      'transferencia',
+      params.toBook,
+      fundsDestinationForTransferBank(params.toBook, params.transferBank)
+    );
+  }
   const { data, error } = await supabaseAdmin
     .from('cash_transactions')
     .insert({
@@ -1059,11 +1084,29 @@ function categoryLabel(t: CashTransactionWithCreator): string {
   if (t.type === 'internal_transfer') {
     const from = t.internal_from_book === 'escuela' ? 'Escuela' : 'DRA';
     const to = t.internal_to_book === 'escuela' ? 'Escuela' : 'DRA';
+    if (t.internal_channel === 'deposito') {
+      return `Depósito interno (${from} → ${to}: efectivo origen → cuenta bancaria destino)`;
+    }
     const ch = t.internal_channel === 'efectivo' ? 'efectivo' : 'transferencia';
     return `Transferencia interna (${from} → ${to}, ${ch})`;
   }
   if (t.type === 'income') return t.income_type ? (INCOME_TYPE_LABELS[t.income_type] ?? t.income_type) : 'Otros';
   return t.category ? (EXPENSE_CATEGORY_LABELS[t.category] ?? t.category) : 'Otros';
+}
+
+function fundsDestDisplay(t: CashTransactionWithCreator): string {
+  if (!t.funds_destination) return '—';
+  return FUNDS_DESTINATION_LABELS[t.funds_destination as FundsDestination] ?? String(t.funds_destination);
+}
+
+function internalTransferExportTypeLabel(t: Pick<CashTransactionWithCreator, 'internal_channel'>): string {
+  if (t.internal_channel === 'deposito') return 'Depósito interno';
+  return 'Transf. interna';
+}
+
+function internalTransferPaymentExportLabel(t: CashTransactionWithCreator): string {
+  if (t.internal_channel === 'deposito') return 'Depósito (efectivo → banco destino)';
+  return PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method;
 }
 
 function bookExportTitle(book: CashBook): string {
@@ -1998,10 +2041,10 @@ export async function buildCashReportExcelFull(
     for (const t of data.internalTransfers) {
       const row = movSheet.addRow({
         date: formatDateForExport(t.created_at),
-        type: 'Transf. interna',
+        type: internalTransferExportTypeLabel(t),
         concept: t.concept,
         category: categoryLabel(t),
-        payment: PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+        payment: internalTransferPaymentExportLabel(t),
         amount: Number(t.amount),
         user: t.created_by_name ?? '',
         notes: t.notes ?? '',
@@ -2357,10 +2400,10 @@ export async function buildCashReportPdf(
       const amountStr = '$ ' + Number(t.amount).toFixed(2);
       const row: string[] = [
         formatDateForExport(t.created_at),
-        'Transf. interna',
+        internalTransferExportTypeLabel(t),
         t.concept ?? '',
         categoryLabel(t),
-        PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+        internalTransferPaymentExportLabel(t),
         amountStr,
         t.created_by_name ?? '',
         t.notes ?? '',
@@ -2455,11 +2498,6 @@ export async function buildCashReportPdf(
 
   doc.end();
   return finish;
-}
-
-function fundsDestDisplay(t: CashTransactionWithCreator): string {
-  if (!t.funds_destination) return '—';
-  return FUNDS_DESTINATION_LABELS[t.funds_destination as FundsDestination] ?? String(t.funds_destination);
 }
 
 /** Excel: Escuela + DRA + movimientos unificados en un solo archivo. */
@@ -2708,11 +2746,11 @@ export async function buildCashReportExcelCombined(
       const row = mov.addRow({
         libro: 'Interna',
         date: formatDateForExport(t.created_at),
-        type: 'Transf. interna',
+        type: internalTransferExportTypeLabel(t),
         concept: t.concept,
         category: categoryLabel(t),
-        bank: '—',
-        payment: PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+        bank: t.funds_destination ? fundsDestDisplay(t) : '—',
+        payment: internalTransferPaymentExportLabel(t),
         amount: Number(t.amount),
         user: t.created_by_name ?? '',
         notes: t.notes ?? '',
@@ -3036,7 +3074,7 @@ export async function buildCashReportPdfCombined(
           'Int.',
           t.concept ?? '',
           categoryLabel(t),
-          PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+          internalTransferPaymentExportLabel(t),
           '$ ' + Number(t.amount).toFixed(2),
           (t.notes ?? '').slice(0, 90),
         ],
