@@ -235,7 +235,7 @@ export default function ReportesPorCursoPage() {
 
   return (
     <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-800 to-neutral-900 p-6 text-white shadow-xl">
+      <div className="relative overflow-hidden rounded-3xl border border-neutral-700/40 bg-gradient-to-br from-neutral-900 via-neutral-800 to-neutral-900 p-6 text-white shadow-xl">
         <div className="relative z-10">
           <h2 className="text-xl font-bold mb-1">Reportes por curso</h2>
           <p className="text-neutral-400 text-sm">
@@ -253,7 +253,7 @@ export default function ReportesPorCursoPage() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Ej: Tipo B, 200, Mecánica..."
-              className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none"
+              className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 bg-white focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none"
             />
           </div>
           {loading ? (
@@ -267,18 +267,21 @@ export default function ReportesPorCursoPage() {
               No hay cursos que coincidan con &quot;{searchQuery.trim()}&quot;. Prueba con otro término.
             </div>
           ) : (
-            <ul className="divide-y max-h-[400px] overflow-auto">
+            <ul className="divide-y max-h-[460px] overflow-auto">
               {filteredCohorts.map((c) => (
                 <li
                   key={c.id}
-                  className={`px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 cursor-pointer hover:bg-neutral-50 ${selectedCohort?.id === c.id ? 'bg-red-50' : ''}`}
+                  className={`px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 cursor-pointer transition-colors hover:bg-neutral-50 ${selectedCohort?.id === c.id ? 'bg-red-50/80 ring-1 ring-inset ring-red-100' : ''}`}
                   onClick={() => setSelectedCohort(selectedCohort?.id === c.id ? null : c)}
                 >
-                  <p className="font-medium min-w-0">{c.courses?.name || 'Curso'} Nro {c.name}</p>
+                  <div className="min-w-0">
+                    <p className="font-medium text-neutral-900 truncate">{c.courses?.name || 'Curso'} Nro {c.name}</p>
+                    <p className="text-xs text-neutral-500 truncate">Codigo: {c.code}</p>
+                  </div>
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setDeleteWithUsersModal(c); }}
-                    className="shrink-0 min-h-[44px] px-3 py-2 sm:py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors w-full sm:w-auto"
+                    className="shrink-0 min-h-[44px] px-3 py-2 sm:py-1.5 rounded-xl bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors w-full sm:w-auto"
                     title="Eliminar este curso y todos sus usuarios (descarga el CSV antes)"
                   >
                     Eliminar curso y usuarios
@@ -304,33 +307,33 @@ export default function ReportesPorCursoPage() {
             <div className="p-6 text-red-600">{reportError}</div>
           ) : report ? (
             <div className="p-6 overflow-auto overflow-x-auto max-h-[500px]">
-              <div className="flex flex-wrap items-center gap-2 mb-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4 rounded-xl border border-neutral-200 bg-neutral-50/70 px-4 py-3">
                 <p className="font-medium text-neutral-900">{report.cohort?.courseName || 'Curso'} Nro {report.cohort?.name || ''}</p>
                 <button
                   type="button"
                   onClick={downloadExcel}
-                  className="px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 shadow-md transition-all"
+                  className="min-h-[42px] px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-medium hover:bg-green-700 shadow-md transition-all"
                 >
                   Descargar Excel (CSV)
                 </button>
               </div>
               <table className="w-full text-sm min-w-[400px]">
                 <thead>
-                  <tr className="border-b">
-                    <th className="text-left py-2 font-medium">Estudiante</th>
-                    <th className="text-left py-2 font-medium">Tiempo</th>
-                    <th className="text-left py-2 font-medium">Exámenes</th>
+                  <tr className="border-b border-neutral-200 bg-neutral-50/70">
+                    <th className="text-left py-2.5 px-2 font-semibold text-neutral-700">Estudiante</th>
+                    <th className="text-left py-2.5 px-2 font-semibold text-neutral-700">Tiempo</th>
+                    <th className="text-left py-2.5 px-2 font-semibold text-neutral-700">Exámenes</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(report.students || []).map((s) => (
-                    <tr key={s.email} className="border-b">
-                      <td className="py-2">
+                    <tr key={s.email} className="border-b border-neutral-100 hover:bg-neutral-50/60 transition-colors">
+                      <td className="py-3 px-2">
                         <p className="font-medium">{s.fullName || s.email}</p>
                         <p className="text-neutral-500 text-xs">{s.email}</p>
                       </td>
-                      <td className="py-2">{formatTime(s.totalTimeSeconds ?? 0)}</td>
-                      <td className="py-2">
+                      <td className="py-3 px-2 text-neutral-700">{formatTime(s.totalTimeSeconds ?? 0)}</td>
+                      <td className="py-3 px-2">
                         {s.examResults?.length ? (
                           <ul className="space-y-1">
                             {s.examResults.map((e, i) => (

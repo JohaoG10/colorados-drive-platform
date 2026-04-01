@@ -39,12 +39,102 @@ export interface ScheduleGroupRow {
   student_count?: number;
 }
 
+export interface PracticeBookingInput {
+  instructorId: string;
+  scheduleType: 'weekdays' | 'weekends';
+  startTime: string;
+  hoursPerDay: number;
+  practiceStartDate: string;
+  practiceEndDate: string;
+  participantName: string;
+  participantUserId?: string | null;
+}
+
+export interface PracticeBookingRow {
+  id: string;
+  participant_name: string;
+  participant_user_id: string | null;
+  practice_start_date: string;
+  practice_end_date: string;
+  start_time: string;
+  end_time: string;
+  schedule_type: 'weekdays' | 'weekends';
+  hours_per_day: number;
+  instructor_id: string;
+  instructor_name: string;
+  created_at: string;
+}
+
+function isMissingTableError(err: unknown): boolean {
+  const msg = (err as { message?: string } | null)?.message || '';
+  return msg.includes('relation') && msg.includes('does not exist');
+}
+
+function isMissingColumnError(err: unknown): boolean {
+  const msg = (err as { message?: string } | null)?.message || '';
+  return (
+    (msg.includes('column') && msg.includes('does not exist')) ||
+    (msg.includes('Could not find the') && msg.includes('column')) ||
+    msg.toLowerCase().includes('schema cache')
+  );
+}
+
 /** Slots disponibles para un cohorte + instructor (no ocupados). Si excludeScheduleId se pasa, ese slot se considera libre (para reasignar al mismo sin conflicto). */
 export async function getAvailableSlots(
   cohortId: string,
   instructorId: string,
-  excludeScheduleId?: string | null
+  excludeScheduleId?: string | null,
+  practiceStartDate?: string | null,
+  practiceEndDate?: string | null,
+  excludeUserId?: string | null
 ): Promise<{ day_of_week: number; start_time: string }[]> {
+  // Si hay rango de práctica, usar ocupación real por fecha (no solo existencia del slot).
+  if (practiceStartDate && practiceEndDate) {
+    const { data: rows, error: rowsErr } = await supabaseAdmin
+      .from('course_schedules')
+      .select('id, day_of_week, start_time')
+      .eq('cohort_id', cohortId)
+      .eq('instructor_id', instructorId);
+    if (rowsErr) throw new Error(rowsErr.message);
+    const slotRows = (rows || []) as { id: string; day_of_week: number; start_time: string }[];
+    const candidates = slotRows.filter((r) => !excludeScheduleId || r.id !== excludeScheduleId);
+    if (candidates.length === 0) return [];
+
+    const { occupied } = await getInstructorAvailabilityForWeek(
+      instructorId,
+      practiceStartDate,
+      practiceEndDate,
+      cohortId,
+      excludeUserId ?? undefined
+    );
+    const occupiedSet = new Set(occupied.map((o) => `${o.date.slice(0, 10)}-${normalizeTimeToHHmm(o.start_time)}`));
+
+    const dateList: { iso: string; day: number }[] = [];
+    const start = parseLocalDate(practiceStartDate);
+    const end = parseLocalDate(practiceEndDate);
+    end.setHours(23, 59, 59, 999);
+    for (let d = new Date(start.getTime()); d <= end; d.setDate(d.getDate() + 1)) {
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      dateList.push({ iso, day: getDayOfWeek(d) });
+    }
+
+    const result: { day_of_week: number; start_time: string }[] = [];
+    const seen = new Set<string>();
+    for (const r of candidates) {
+      const startTime = normalizeTimeToHHmm(r.start_time);
+      const key = `${r.day_of_week}-${startTime}`;
+      if (seen.has(key)) continue;
+      const matchingDates = dateList.filter((x) => x.day === r.day_of_week);
+      if (matchingDates.length === 0) continue;
+      const allDatesFree = matchingDates.every((x) => !occupiedSet.has(`${x.iso}-${startTime}`));
+      if (allDatesFree) {
+        seen.add(key);
+        result.push({ day_of_week: r.day_of_week, start_time: startTime });
+      }
+    }
+    return result;
+  }
+
   const { data: taken, error } = await supabaseAdmin
     .from('course_schedules')
     .select('id, day_of_week, start_time')
@@ -73,18 +163,69 @@ export async function getAvailableSlots(
 
 /** Bloques de inicio disponibles (inicio–fin) según tipo de día y duración. Excluye el bloque actual si se reasigna (excludeScheduleId). */
 export async function getAvailableStartTimes(
-  cohortId: string,
+  cohortId: string | undefined,
   instructorId: string,
   scheduleType: 'weekdays' | 'weekends',
   hoursPerDay: number,
-  excludeScheduleId?: string | null
+  excludeScheduleId?: string | null,
+  practiceStartDate?: string | null,
+  practiceEndDate?: string | null,
+  excludeUserId?: string | null
 ): Promise<{ start_time: string; end_time: string }[]> {
   const duration = Math.min(4, Math.max(1, hoursPerDay));
+
+  if (practiceStartDate && practiceEndDate) {
+    const { occupied } = await getInstructorAvailabilityForWeek(
+      instructorId,
+      practiceStartDate,
+      practiceEndDate,
+      cohortId,
+      excludeUserId ?? undefined
+    );
+    const occupiedSet = new Set(occupied.map((o) => `${o.date.slice(0, 10)}-${normalizeTimeToHHmm(o.start_time)}`));
+    const start = parseLocalDate(practiceStartDate);
+    const end = parseLocalDate(practiceEndDate);
+    end.setHours(23, 59, 59, 999);
+    const datesByDay = new Map<number, string[]>();
+    for (let d = new Date(start.getTime()); d <= end; d.setDate(d.getDate() + 1)) {
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const day = getDayOfWeek(d);
+      if (!datesByDay.has(day)) datesByDay.set(day, []);
+      datesByDay.get(day)!.push(iso);
+    }
+
+    const days = scheduleType === 'weekdays' ? WEEKDAYS : WEEKEND_DAYS;
+    const result: { start_time: string; end_time: string }[] = [];
+    for (const startTime of HOURS_6_TO_23) {
+      const endTime = addHoursToHHmm(startTime, duration);
+      if (!endTime) continue;
+      let allFree = true;
+      let checkedAnyDate = false;
+      for (const day of days) {
+        const dates = datesByDay.get(day) || [];
+        for (const date of dates) {
+          checkedAnyDate = true;
+          for (let h = 0; h < duration; h++) {
+            const t = addHoursToHHmm(startTime, h);
+            if (occupiedSet.has(`${date}-${t}`)) {
+              allFree = false;
+              break;
+            }
+          }
+          if (!allFree) break;
+        }
+        if (!allFree) break;
+      }
+      if (allFree && checkedAnyDate) result.push({ start_time: startTime, end_time: endTime });
+    }
+    return result;
+  }
+
   const { data: rows, error } = await supabaseAdmin
     .from('course_schedules')
-    .select('id, day_of_week, start_time, schedule_group_id')
-    .eq('cohort_id', cohortId)
+    .select('id, cohort_id, day_of_week, start_time, schedule_group_id')
     .eq('instructor_id', instructorId);
+  const rowsScoped = cohortId ? (rows || []).filter((r) => String((r as { cohort_id?: unknown }).cohort_id || '') === cohortId) : rows;
 
   if (error) throw new Error(error.message);
 
@@ -92,12 +233,12 @@ export async function getAvailableStartTimes(
   const timeNorm = (t: unknown) => (typeof t === 'string' ? t.slice(0, 5) : String(t));
 
   const excludeKeys = new Set<string>();
-  if (excludeScheduleId && rows?.length) {
-    const current = rows.find((r) => (r as { id: string }).id === excludeScheduleId) as { id: string; day_of_week: number; start_time: string; schedule_group_id: string | null } | undefined;
+  if (excludeScheduleId && rowsScoped?.length) {
+    const current = rowsScoped.find((r) => (r as { id: string }).id === excludeScheduleId) as { id: string; day_of_week: number; start_time: string; schedule_group_id: string | null } | undefined;
     if (current) {
       const gid = current.schedule_group_id;
       if (gid) {
-        const inGroup = rows.filter((r) => (r as { schedule_group_id?: string | null }).schedule_group_id === gid);
+        const inGroup = rowsScoped.filter((r) => (r as { schedule_group_id?: string | null }).schedule_group_id === gid);
         for (const r of inGroup) {
           const t = timeNorm((r as { start_time: string }).start_time);
           excludeKeys.add(`${(r as { day_of_week: number }).day_of_week}-${t}`);
@@ -108,7 +249,7 @@ export async function getAvailableStartTimes(
     }
   }
 
-  for (const r of rows || []) {
+  for (const r of rowsScoped || []) {
     const key = `${(r as { day_of_week: number }).day_of_week}-${timeNorm((r as { start_time: string }).start_time)}`;
     if (!excludeKeys.has(key)) takenSet.add(key);
   }
@@ -133,6 +274,108 @@ export async function getAvailableStartTimes(
     if (allFree) result.push({ start_time: startTime, end_time: endTime });
   }
   return result;
+}
+
+export async function createPracticeBooking(input: PracticeBookingInput): Promise<{ id: string }> {
+  const participantName = input.participantName.trim();
+  if (!participantName) throw new Error('El nombre de la persona es requerido.');
+  const startDate = input.practiceStartDate.slice(0, 10);
+  const endDate = input.practiceEndDate.slice(0, 10);
+  if (!startDate || !endDate) throw new Error('Fechas de práctica inválidas.');
+  if (parseLocalDate(startDate) > parseLocalDate(endDate)) throw new Error('La fecha de fin no puede ser menor que la fecha de inicio.');
+
+  const hoursPerDay = Math.min(4, Math.max(1, input.hoursPerDay || 1));
+  const available = await getAvailableStartTimes(
+    undefined,
+    input.instructorId,
+    input.scheduleType,
+    hoursPerDay,
+    null,
+    startDate,
+    endDate
+  );
+  const startTime = normalizeTimeToHHmm(input.startTime);
+  const isAvailable = available.some((s) => normalizeTimeToHHmm(s.start_time) === startTime);
+  if (!isAvailable) throw new Error('Ese horario no está disponible para el rango de fechas seleccionado.');
+
+  const { data, error } = await supabaseAdmin
+    .from('practice_bookings')
+    .insert({
+      instructor_id: input.instructorId,
+      start_time: startTime,
+      participant_name: participantName,
+      participant_user_id: input.participantUserId ?? null,
+      practice_start_date: startDate,
+      practice_end_date: endDate,
+      practice_hours_per_day: hoursPerDay,
+      schedule_type: input.scheduleType,
+    })
+    .select('id')
+    .single();
+  if (error) {
+    if (isMissingColumnError(error) || isMissingTableError(error)) {
+      throw new Error('Falta actualizar la base de datos para prácticas libres. Ejecuta la migración 026.');
+    }
+    throw new Error(error.message);
+  }
+  return { id: String((data as { id?: string } | null)?.id || '') };
+}
+
+export async function listPracticeBookings(
+  weekStartISO: string,
+  weekEndISO: string,
+  instructorId?: string
+): Promise<PracticeBookingRow[]> {
+  let query = supabaseAdmin
+    .from('practice_bookings')
+    .select(`
+      id, participant_name, participant_user_id, practice_start_date, practice_end_date, practice_hours_per_day, schedule_type, created_at,
+      instructor_id, start_time, instructors(full_name)
+    `)
+    .lte('practice_start_date', weekEndISO.slice(0, 10))
+    .gte('practice_end_date', weekStartISO.slice(0, 10))
+    .order('created_at', { ascending: false });
+  if (instructorId) query = query.eq('instructor_id', instructorId);
+
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingTableError(error) || isMissingColumnError(error)) return [];
+    throw new Error(error.message);
+  }
+  return (data || []).map((r) => {
+    const row = r as {
+      id?: string;
+      participant_name?: string;
+      participant_user_id?: string | null;
+      practice_start_date?: string;
+      practice_end_date?: string;
+      practice_hours_per_day?: number;
+      schedule_type?: string;
+      created_at?: string;
+      instructor_id?: string;
+      start_time?: string;
+      instructors?: { full_name?: string } | { full_name?: string }[];
+    };
+    const ins = row.instructors;
+    const insSingle = Array.isArray(ins) ? ins[0] : ins;
+    return {
+      id: String(row.id || ''),
+      participant_name: String(row.participant_name || 'Sin nombre'),
+      participant_user_id: (row.participant_user_id ?? null),
+      practice_start_date: String(row.practice_start_date || ''),
+      practice_end_date: String(row.practice_end_date || ''),
+      start_time: normalizeTimeToHHmm(row.start_time || '08:00'),
+      end_time: addHoursToHHmm(
+        normalizeTimeToHHmm(row.start_time || '08:00'),
+        Math.min(4, Math.max(1, Number(row.practice_hours_per_day || 1)))
+      ) || normalizeTimeToHHmm(row.start_time || '08:00'),
+      schedule_type: ((row.schedule_type || 'weekdays') as 'weekdays' | 'weekends'),
+      hours_per_day: Math.min(4, Math.max(1, Number(row.practice_hours_per_day || 1))),
+      instructor_id: String(row.instructor_id || ''),
+      instructor_name: (insSingle as { full_name?: string } | null)?.full_name || '—',
+      created_at: String(row.created_at || ''),
+    };
+  });
 }
 
 /** Slots libres y ocupados con nombres de estudiantes para un cohorte + instructor (para mostrar disponibilidad con quién está cada horario). */
@@ -620,7 +863,8 @@ export async function getInstructorAvailabilityForWeek(
   instructorId: string,
   weekStartISO: string,
   weekEndISO: string,
-  cohortId?: string
+  cohortId?: string,
+  excludeUserId?: string
 ): Promise<{
   occupied: { date: string; start_time: string; student_names: string[]; status: 'occupied_week1' | 'occupied_ending' }[];
   free: { date: string; start_time: string; schedule_id?: string }[];
@@ -666,11 +910,13 @@ export async function getInstructorAvailabilityForWeek(
   const profilesBySlot = new Map<string, ProfileInfo[]>();
 
   if (scheduleIds.length > 0) {
-    const { data: profiles, error: pErr } = await supabaseAdmin
+    let profilesQuery = supabaseAdmin
       .from('user_profiles')
-      .select('schedule_id, full_name, start_date, practice_weeks, practice_start_date, practice_end_date')
+      .select('id, schedule_id, full_name, start_date, practice_weeks, practice_start_date, practice_end_date')
       .eq('role', 'student')
       .in('schedule_id', scheduleIds);
+    if (excludeUserId) profilesQuery = profilesQuery.neq('id', excludeUserId);
+    const { data: profiles, error: pErr } = await profilesQuery;
     if (!pErr && profiles) {
       for (const p of profiles) {
         const id = (p as { schedule_id: string | null }).schedule_id;
@@ -693,6 +939,42 @@ export async function getInstructorAvailabilityForWeek(
           if (!profilesBySlot.has(slotId)) profilesBySlot.set(slotId, []);
           profilesBySlot.get(slotId)!.push(info);
         }
+      }
+    }
+  }
+
+  type BookingInfo = {
+    name: string;
+    practice_start: Date | null;
+    practice_end: Date | null;
+    schedule_type: 'weekdays' | 'weekends';
+    start_time: string;
+    hours_per_day: number;
+  };
+  const bookings: BookingInfo[] = [];
+  {
+    const { data: bookingsRows, error: bErr } = await supabaseAdmin
+      .from('practice_bookings')
+      .select('participant_name, practice_start_date, practice_end_date, schedule_type, start_time, practice_hours_per_day')
+      .eq('instructor_id', instructorId);
+    if (bErr) {
+      if (!isMissingTableError(bErr) && !isMissingColumnError(bErr)) throw new Error(bErr.message);
+    } else if (bookingsRows) {
+      for (const b of bookingsRows) {
+        const name = (b as { participant_name?: string | null }).participant_name || 'Práctica';
+        const startRaw = (b as { practice_start_date?: string | null }).practice_start_date;
+        const endRaw = (b as { practice_end_date?: string | null }).practice_end_date;
+        const schedule_type = (((b as { schedule_type?: string | null }).schedule_type || 'weekdays') as 'weekdays' | 'weekends');
+        const start_time = normalizeTimeToHHmm((b as { start_time?: string | null }).start_time || '08:00');
+        const hours_per_day = Math.min(4, Math.max(1, Number((b as { practice_hours_per_day?: number | null }).practice_hours_per_day || 1)));
+        bookings.push({
+          name,
+          practice_start: startRaw ? parseLocalDate(startRaw) : null,
+          practice_end: endRaw ? parseLocalDate(endRaw) : null,
+          schedule_type,
+          start_time,
+          hours_per_day,
+        });
       }
     }
   }
@@ -733,6 +1015,22 @@ export async function getInstructorAvailabilityForWeek(
         entry.names.add(stu.name);
         if (isWeek1) entry.hasWeek1 = true;
         if (isEnding) entry.hasEnding = true;
+      }
+      for (const bk of bookings) {
+        const expectedDow = bk.schedule_type === 'weekdays' ? dayOfWeek >= 1 && dayOfWeek <= 5 : dayOfWeek === 6 || dayOfWeek === 7;
+        if (!expectedDow) continue;
+        const dayCheck = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+        if (bk.practice_start && dayCheck < new Date(bk.practice_start.getFullYear(), bk.practice_start.getMonth(), bk.practice_start.getDate(), 0, 0, 0, 0)) continue;
+        if (bk.practice_end && dayCheck > new Date(bk.practice_end.getFullYear(), bk.practice_end.getMonth(), bk.practice_end.getDate(), 23, 59, 59, 999)) continue;
+        for (let h = 0; h < bk.hours_per_day; h++) {
+          const t = addHoursToHHmm(bk.start_time, h);
+          if (!t) continue;
+          const key = `${dateISO}-${t}`;
+          if (!bySlotKey.has(key)) bySlotKey.set(key, { names: new Set(), hasWeek1: false, hasEnding: false });
+          const entry = bySlotKey.get(key)!;
+          entry.names.add(bk.name);
+          entry.hasWeek1 = true;
+        }
       }
     }
   }

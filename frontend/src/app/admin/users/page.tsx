@@ -208,21 +208,24 @@ export default function AdminUsersPage() {
     }
     const scheduleType = form.scheduleType === 'weekdays' || form.scheduleType === 'weekends' ? form.scheduleType : null;
     const hoursPerDay = form.practiceHoursPerDay ?? 1;
+    const dateRangeQ = form.practiceStartDate && form.practiceEndDate
+      ? `&practiceStartDate=${encodeURIComponent(form.practiceStartDate)}&practiceEndDate=${encodeURIComponent(form.practiceEndDate)}`
+      : '';
     if (scheduleType) {
-      const url = `${API_URL}/api/admin/available-slots?cohortId=${encodeURIComponent(form.cohortId)}&instructorId=${encodeURIComponent(form.instructorId)}&scheduleType=${scheduleType}&hoursPerDay=${hoursPerDay}`;
+      const url = `${API_URL}/api/admin/available-slots?cohortId=${encodeURIComponent(form.cohortId)}&instructorId=${encodeURIComponent(form.instructorId)}&scheduleType=${scheduleType}&hoursPerDay=${hoursPerDay}${dateRangeQ}`;
       fetch(url, { headers: getAuthHeaders(token) })
         .then((r) => r.json())
         .then((data) => setAvailableStartBlocks(Array.isArray(data?.slots) ? data.slots : []))
         .catch(() => setAvailableStartBlocks([]));
       setAvailableSlots([]);
     } else {
-      fetch(`${API_URL}/api/admin/available-slots?cohortId=${encodeURIComponent(form.cohortId)}&instructorId=${encodeURIComponent(form.instructorId)}`, { headers: getAuthHeaders(token) })
+      fetch(`${API_URL}/api/admin/available-slots?cohortId=${encodeURIComponent(form.cohortId)}&instructorId=${encodeURIComponent(form.instructorId)}${dateRangeQ}`, { headers: getAuthHeaders(token) })
         .then((r) => r.json())
         .then((data) => setAvailableSlots(Array.isArray(data?.slots) ? data.slots : []))
         .catch(() => setAvailableSlots([]));
       setAvailableStartBlocks([]);
     }
-  }, [token, form.cohortId, form.instructorId, form.scheduleType, form.practiceHoursPerDay]);
+  }, [token, form.cohortId, form.instructorId, form.scheduleType, form.practiceHoursPerDay, form.practiceStartDate, form.practiceEndDate]);
 
   useEffect(() => {
     if (!token || !editModal || !editForm.cohortId || !editForm.instructorId) {
@@ -233,15 +236,19 @@ export default function AdminUsersPage() {
     const currentScheduleId = editModal?.schedule_id ?? undefined;
     const scheduleType = editForm.scheduleType === 'weekdays' || editForm.scheduleType === 'weekends' ? editForm.scheduleType : null;
     const hoursPerDay = editForm.practiceHoursPerDay ?? 1;
+    const dateRangeQ = editForm.practiceStartDate && editForm.practiceEndDate
+      ? `&practiceStartDate=${encodeURIComponent(editForm.practiceStartDate)}&practiceEndDate=${encodeURIComponent(editForm.practiceEndDate)}`
+      : '';
+    const currentUserQ = editModal?.id ? `&currentUserId=${encodeURIComponent(editModal.id)}` : '';
     if (scheduleType) {
-      const q = `cohortId=${encodeURIComponent(editForm.cohortId)}&instructorId=${encodeURIComponent(editForm.instructorId)}&scheduleType=${scheduleType}&hoursPerDay=${hoursPerDay}${currentScheduleId ? `&currentScheduleId=${encodeURIComponent(currentScheduleId)}` : ''}`;
+      const q = `cohortId=${encodeURIComponent(editForm.cohortId)}&instructorId=${encodeURIComponent(editForm.instructorId)}&scheduleType=${scheduleType}&hoursPerDay=${hoursPerDay}${currentScheduleId ? `&currentScheduleId=${encodeURIComponent(currentScheduleId)}` : ''}${dateRangeQ}${currentUserQ}`;
       fetch(`${API_URL}/api/admin/available-slots?${q}`, { headers: getAuthHeaders(token) })
         .then((r) => r.json())
         .then((data) => setEditAvailableStartBlocks(Array.isArray(data?.slots) ? data.slots : []))
         .catch(() => setEditAvailableStartBlocks([]));
       setEditAvailableSlots([]);
     } else {
-      const q = `cohortId=${encodeURIComponent(editForm.cohortId)}&instructorId=${encodeURIComponent(editForm.instructorId)}${currentScheduleId ? `&currentScheduleId=${encodeURIComponent(currentScheduleId)}` : ''}`;
+      const q = `cohortId=${encodeURIComponent(editForm.cohortId)}&instructorId=${encodeURIComponent(editForm.instructorId)}${currentScheduleId ? `&currentScheduleId=${encodeURIComponent(currentScheduleId)}` : ''}${dateRangeQ}${currentUserQ}`;
       fetch(`${API_URL}/api/admin/available-slots?${q}`, { headers: getAuthHeaders(token) })
         .then((r) => r.json())
         .then((data) => {
@@ -254,7 +261,7 @@ export default function AdminUsersPage() {
         .catch(() => setEditAvailableSlots([]));
       setEditAvailableStartBlocks([]);
     }
-  }, [token, editModal, editForm.cohortId, editForm.instructorId, editForm.dayOfWeek, editForm.startTime, editForm.scheduleType, editForm.practiceHoursPerDay]);
+  }, [token, editModal, editForm.cohortId, editForm.instructorId, editForm.dayOfWeek, editForm.startTime, editForm.scheduleType, editForm.practiceHoursPerDay, editForm.practiceStartDate, editForm.practiceEndDate]);
 
   useEffect(() => {
     if (activityModal && token) {

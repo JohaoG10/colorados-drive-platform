@@ -119,6 +119,15 @@ function shortFundsDestinationLabel(fd: string | null | undefined): string {
   return fd;
 }
 
+function isDepositInternalUI(t: Transaction): boolean {
+  if (t.type !== 'internal_transfer') return false;
+  if (t.internal_channel === 'deposito') return true;
+  if (t.internal_channel !== 'transferencia' || !t.funds_destination || !t.internal_to_book) return false;
+  const to = t.internal_to_book;
+  if (to === 'escuela') return t.funds_destination.includes('_escuela');
+  return t.funds_destination.includes('_dra');
+}
+
 function formatDate(s: string) {
   return new Date(s).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' });
 }
@@ -808,7 +817,7 @@ function CajaMovimientosPageInner() {
                                     t.internal_to_book === 'escuela' ? 'Escuela' : 'DRA'
                                   }`;
                                   const ch =
-                                    t.internal_channel === 'deposito'
+                                    isDepositInternalUI(t)
                                       ? 'Depósito (efectivo→banco)'
                                       : t.internal_channel === 'efectivo'
                                         ? 'Efectivo'
@@ -828,7 +837,7 @@ function CajaMovimientosPageInner() {
                               : '—'}
                           </td>
                           <td className="hidden px-5 py-4 text-slate-600 md:table-cell">
-                            {t.type === 'internal_transfer' && t.internal_channel === 'deposito'
+                            {t.type === 'internal_transfer' && isDepositInternalUI(t)
                               ? 'Depósito interno'
                               : PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method}
                           </td>
@@ -838,13 +847,19 @@ function CajaMovimientosPageInner() {
                                 t.anulado_at
                                   ? 'text-slate-400 line-through'
                                   : t.type === 'internal_transfer'
-                                  ? 'text-slate-600'
+                                  ? (t.internal_to_book === cashBook ? 'text-emerald-600' : 'text-rose-600')
                                   : t.type === 'income'
                                   ? 'text-emerald-600'
                                   : 'text-rose-600'
                               }`}
                             >
-                              {t.type === 'internal_transfer' ? '' : t.type === 'income' ? '+' : '−'}{' '}
+                              {t.type === 'internal_transfer'
+                                ? t.internal_to_book === cashBook
+                                  ? '+'
+                                  : '−'
+                                : t.type === 'income'
+                                  ? '+'
+                                  : '−'}{' '}
                               {formatMoney(t.amount)}
                             </span>
                           </td>

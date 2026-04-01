@@ -337,9 +337,8 @@ async function attachCreatorNames<T extends { created_by: string | null }>(trans
 
 /**
  * Cierre de caja según libro:
- * - Escuela: solo efectivo operativo + internas en efectivo (caja↔caja) + internas depósito solo si sale de Escuela (resta caja física).
- *   Si el destino es Escuela por depósito, no suma a efectivo (entra al banco, no al cajón).
- * - DRA: todos los métodos operativos + todas las internas que afectan DRA (incl. depósito: sale o entra al libro).
+ * - Escuela: efectivo operativo + internas (sale = -, entra = +).
+ * - DRA: todos los métodos operativos + internas (sale = -, entra = +).
  */
 export async function computeBookClosing(sessionId: string): Promise<number> {
   const { data: sessionRaw, error: fetchErr } = await supabaseAdmin
@@ -371,14 +370,8 @@ export async function computeBookClosing(sessionId: string): Promise<number> {
     }
     for (const t of internalTxs) {
       const a = Number(t.amount);
-      if (t.internal_channel === 'efectivo') {
-        if (t.internal_from_book === 'escuela') closing -= a;
-        if (t.internal_to_book === 'escuela') closing += a;
-      } else if (t.internal_channel === 'deposito') {
-        if (t.internal_from_book === 'escuela') closing -= a;
-        /* hacia Escuela: acreditación bancaria, no ingresa al efectivo físico de caja */
-      }
-      /* transferencia entre libros vía cuentas: no mueve caja física Escuela */
+      if (t.internal_from_book === 'escuela') closing -= a;
+      if (t.internal_to_book === 'escuela') closing += a;
     }
     return closing;
   }
@@ -548,6 +541,17 @@ const DEST_BY_BOOK: Record<CashBook, { trans: FundsDestination[]; efectivo: Fund
   },
 };
 
+function isTransferDestinationForBook(dest: FundsDestination | null | undefined, book: CashBook): boolean {
+  return !!dest && DEST_BY_BOOK[book].trans.includes(dest);
+}
+
+function isDepositInternal(t: Pick<CashTransactionWithCreator, 'type' | 'internal_channel' | 'internal_to_book' | 'funds_destination'>): boolean {
+  if (t.type !== 'internal_transfer') return false;
+  if (t.internal_channel === 'deposito') return true;
+  if (t.internal_channel !== 'transferencia' || !t.internal_to_book) return false;
+  return isTransferDestinationForBook(t.funds_destination as FundsDestination | null | undefined, t.internal_to_book);
+}
+
 /** Valida y normaliza destino de fondos según método y libro de caja. */
 export function validateFundsDestination(
   paymentMethod: PaymentMethod,
@@ -707,6 +711,7 @@ export async function addInternalTransfer(params: {
       fundsDestinationForTransferBank(params.toBook, params.transferBank)
     );
   }
+  const persistedChannel: 'efectivo' | 'transferencia' = params.channel === 'efectivo' ? 'efectivo' : 'transferencia';
   const { data, error } = await supabaseAdmin
     .from('cash_transactions')
     .insert({
@@ -721,7 +726,7 @@ export async function addInternalTransfer(params: {
       funds_destination,
       internal_from_book: params.fromBook,
       internal_to_book: params.toBook,
-      internal_channel: params.channel,
+      internal_channel: persistedChannel,
       notes: params.notes?.trim() || null,
       created_by: params.createdBy,
     })
@@ -1084,7 +1089,7 @@ function categoryLabel(t: CashTransactionWithCreator): string {
   if (t.type === 'internal_transfer') {
     const from = t.internal_from_book === 'escuela' ? 'Escuela' : 'DRA';
     const to = t.internal_to_book === 'escuela' ? 'Escuela' : 'DRA';
-    if (t.internal_channel === 'deposito') {
+    if (isDepositInternal(t)) {
       return `Depósito interno (${from} → ${to}: efectivo origen → cuenta bancaria destino)`;
     }
     const ch = t.internal_channel === 'efectivo' ? 'efectivo' : 'transferencia';
@@ -1099,13 +1104,13 @@ function fundsDestDisplay(t: CashTransactionWithCreator): string {
   return FUNDS_DESTINATION_LABELS[t.funds_destination as FundsDestination] ?? String(t.funds_destination);
 }
 
-function internalTransferExportTypeLabel(t: Pick<CashTransactionWithCreator, 'internal_channel'>): string {
-  if (t.internal_channel === 'deposito') return 'Depósito interno';
+function internalTransferExportTypeLabel(t: CashTransactionWithCreator): string {
+  if (isDepositInternal(t)) return 'Depósito interno';
   return 'Transf. interna';
 }
 
 function internalTransferPaymentExportLabel(t: CashTransactionWithCreator): string {
-  if (t.internal_channel === 'deposito') return 'Depósito (efectivo → banco destino)';
+  if (isDepositInternal(t)) return 'Depósito (efectivo → banco destino)';
   return PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method;
 }
 
@@ -2688,76 +2693,67 @@ export async function buildCashReportExcelCombined(
     ws.getColumn(1).width = 38;
   }
 
-  const mov = workbook.addWorksheet('Movimientos integrados', { views: [{ state: 'frozen', ySplit: 1 }] });
-  mov.columns = [
-    { header: 'Libro', key: 'libro', width: 11 },
-    { header: 'Fecha y hora', key: 'date', width: 18 },
-    { header: 'Tipo', key: 'type', width: 14 },
-    { header: 'Concepto', key: 'concept', width: 30 },
-    { header: 'Categoría / detalle', key: 'category', width: 28 },
-    { header: 'Cuenta / banco', key: 'bank', width: 26 },
-    { header: 'Método', key: 'payment', width: 14 },
-    { header: 'Monto', key: 'amount', width: 14 },
-    { header: 'Usuario', key: 'user', width: 18 },
-    { header: 'Observaciones', key: 'notes', width: 26 },
-  ];
-  mov.getRow(1).font = { bold: true };
-
-  type RowT = CashTransactionWithCreator & { libro: string };
-  const operational: RowT[] = [
-    ...data.escuela.transactions.map((t) => ({ ...t, libro: 'Escuela' })),
-    ...data.dra.transactions.map((t) => ({ ...t, libro: 'DRA' })),
-  ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-  for (const t of operational) {
-    const row = mov.addRow({
-      libro: t.libro,
-      date: formatDateForExport(t.created_at),
-      type: t.type === 'income' ? 'Ingreso' : 'Egreso',
-      concept: t.concept,
-      category: categoryLabel(t),
-      bank: fundsDestDisplay(t),
-      payment: PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
-      amount: t.type === 'income' ? Number(t.amount) : -Number(t.amount),
-      user: t.created_by_name ?? '',
-      notes: t.notes ?? '',
-    });
-    const c = row.getCell(8);
-    c.numFmt = '"$"#,##0.00';
-    c.font = { color: { argb: t.type === 'income' ? 'FF059669' : 'FFDC2626' } };
-  }
-
-  if (data.allInternalTransfers.length > 0) {
-    mov.addRow([]);
-    const sep = mov.addRow({
-      libro: '—',
-      date: '',
-      type: 'Internas',
-      concept: 'Transferencias entre Escuela y DRA (no operativas)',
-      category: '',
-      bank: '',
-      payment: '',
-      amount: '',
-      user: '',
-      notes: '',
-    });
-    sep.getCell(1).font = { bold: true };
-    for (const t of data.allInternalTransfers) {
-      const row = mov.addRow({
-        libro: 'Interna',
+  const makeBookMovSheet = (name: string, txs: CashTransactionWithCreator[]) => {
+    const ws = workbook.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = [
+      { header: 'Fecha y hora', key: 'date', width: 18 },
+      { header: 'Tipo', key: 'type', width: 14 },
+      { header: 'Concepto', key: 'concept', width: 30 },
+      { header: 'Categoría / detalle', key: 'category', width: 30 },
+      { header: 'Cuenta / banco', key: 'bank', width: 26 },
+      { header: 'Método', key: 'payment', width: 16 },
+      { header: 'Monto', key: 'amount', width: 14 },
+      { header: 'Usuario', key: 'user', width: 18 },
+      { header: 'Observaciones', key: 'notes', width: 28 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    const sorted = [...txs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    for (const t of sorted) {
+      const row = ws.addRow({
         date: formatDateForExport(t.created_at),
-        type: internalTransferExportTypeLabel(t),
+        type: t.type === 'income' ? 'Ingreso' : 'Egreso',
         concept: t.concept,
         category: categoryLabel(t),
-        bank: t.funds_destination ? fundsDestDisplay(t) : '—',
-        payment: internalTransferPaymentExportLabel(t),
-        amount: Number(t.amount),
+        bank: fundsDestDisplay(t),
+        payment: PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+        amount: t.type === 'income' ? Number(t.amount) : -Number(t.amount),
         user: t.created_by_name ?? '',
         notes: t.notes ?? '',
       });
-      row.getCell(8).numFmt = '"$"#,##0.00';
-      row.getCell(8).font = { color: { argb: 'FF64748B' } };
+      row.getCell(7).numFmt = '"$"#,##0.00';
+      row.getCell(7).font = { color: { argb: t.type === 'income' ? 'FF059669' : 'FFDC2626' } };
     }
+  };
+  makeBookMovSheet('Movimientos Escuela', data.escuela.transactions);
+  makeBookMovSheet('Movimientos DRA', data.dra.transactions);
+
+  const internalWs = workbook.addWorksheet('Transferencias internas', { views: [{ state: 'frozen', ySplit: 1 }] });
+  internalWs.columns = [
+    { header: 'Fecha y hora', key: 'date', width: 18 },
+    { header: 'Tipo', key: 'type', width: 18 },
+    { header: 'Concepto', key: 'concept', width: 32 },
+    { header: 'Detalle', key: 'category', width: 36 },
+    { header: 'Cuenta / banco', key: 'bank', width: 26 },
+    { header: 'Método', key: 'payment', width: 24 },
+    { header: 'Monto', key: 'amount', width: 14 },
+    { header: 'Usuario', key: 'user', width: 18 },
+    { header: 'Observaciones', key: 'notes', width: 28 },
+  ];
+  internalWs.getRow(1).font = { bold: true };
+  for (const t of data.allInternalTransfers) {
+    const row = internalWs.addRow({
+      date: formatDateForExport(t.created_at),
+      type: internalTransferExportTypeLabel(t),
+      concept: t.concept,
+      category: categoryLabel(t),
+      bank: t.funds_destination ? fundsDestDisplay(t) : '—',
+      payment: internalTransferPaymentExportLabel(t),
+      amount: Number(t.amount),
+      user: t.created_by_name ?? '',
+      notes: t.notes ?? '',
+    });
+    row.getCell(7).numFmt = '"$"#,##0.00';
+    row.getCell(7).font = { color: { argb: 'FF64748B' } };
   }
 
   const intSheet = workbook.addWorksheet('Por libro (detalle)', { views: [{ state: 'frozen', ySplit: 1 }] });
@@ -2973,109 +2969,106 @@ export async function buildCashReportPdfCombined(
     doc.y = cy + 10;
   }
 
-  doc.font('Helvetica-Bold').fontSize(10).fillColor(primary).text('Movimientos (Escuela + DRA)', margin, doc.y);
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(primary).text('Movimientos por libro', margin, doc.y);
   doc.moveDown(0.4);
-  const headers = ['Libro', 'Fecha', 'Tipo', 'Concepto', 'Banco/Cuenta', 'Método', 'Monto', 'Notas'];
-  let tableTop = doc.y;
-  doc.font('Helvetica-Bold').fontSize(7).fillColor(primary);
-  let x = tableX;
-  const headerPad = 2;
-  headers.forEach((h, i) => {
-    doc.rect(x, tableTop, colW[i], rowH).fill(rowHeader).stroke();
-    doc.fillColor(primary).text(h, x + headerPad, tableTop + 5, { width: colW[i] - 4 });
-    x += colW[i];
-  });
-  let y = tableTop + rowH;
+  const headers = ['Fecha', 'Tipo', 'Concepto', 'Banco/Cuenta', 'Método', 'Monto', 'Usuario', 'Notas'];
+  let y = doc.y;
   doc.font('Helvetica').fontSize(7);
   const tableBreakY = pageH - 72;
+  let x = tableX;
+  const headerPad = 2;
 
-  type RowT = CashTransactionWithCreator & { libro: string };
-  const operationalSorted: RowT[] = [
-    ...data.escuela.transactions.map((t) => ({ ...t, libro: 'Escuela' })),
-    ...data.dra.transactions.map((t) => ({ ...t, libro: 'DRA' })),
-  ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-  const drawRows = operationalSorted.map((t) => ({
-    cells: [
-      t.libro,
-      formatDateForExport(t.created_at),
-      t.type === 'income' ? 'Ing.' : 'Egr.',
-      t.concept ?? '',
-      fundsDestDisplay(t),
-      PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
-      (t.type === 'income' ? '+' : '−') + ' $' + Number(t.amount).toFixed(2),
-      (t.notes ?? '').slice(0, 90),
-    ],
-    income: t.type === 'income',
-  }));
-
-  drawRows.forEach((row, rowIndex) => {
+  const drawHeader = () => {
     x = tableX;
-    let cellHeight = rowH;
-    for (let i = 0; i < row.cells.length; i++) {
-      const w = colW[i] - 6;
-      const h = (doc as unknown as { heightOfString: (text: string, opts?: { width?: number }) => number }).heightOfString(
-        row.cells[i],
-        { width: w }
-      );
-      cellHeight = Math.max(cellHeight, Math.ceil(h) + 8);
-    }
-    if (y + cellHeight > tableBreakY) {
-      (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
-      doc.y = margin + 14;
-      y = doc.y;
-      doc.font('Helvetica-Bold').fontSize(7).fillColor(primary);
-      x = tableX;
-      headers.forEach((h, i) => {
-        doc.rect(x, y, colW[i], rowH).fill(rowHeader).stroke();
-        doc.text(h, x + headerPad, y + 5, { width: colW[i] - 4 });
-        x += colW[i];
-      });
-      y += rowH;
-      doc.font('Helvetica').fontSize(7);
-    }
-    x = tableX;
-    if (rowIndex % 2 === 1) doc.rect(tableX, y, tableW, cellHeight).fill(rowAlt);
-    row.cells.forEach((cell, i) => {
-      doc.rect(x, y, colW[i], cellHeight).stroke();
-      if (i === 6) doc.fillColor(row.income ? green : red);
-      else doc.fillColor(primary);
-      doc.text(cell, x + 3, y + 4, { width: colW[i] - 6, align: i === 6 ? 'right' : 'left' });
+    doc.font('Helvetica-Bold').fontSize(7).fillColor(primary);
+    headers.forEach((h, i) => {
+      doc.rect(x, y, colW[i], rowH).fill(rowHeader).stroke();
+      doc.fillColor(primary).text(h, x + headerPad, y + 5, { width: colW[i] - 4 });
       x += colW[i];
     });
-    doc.fillColor(primary);
-    y += cellHeight;
-  });
+    y += rowH;
+    doc.font('Helvetica').fontSize(7).fillColor(primary);
+  };
+
+  const drawBookRows = (title: string, txs: CashTransactionWithCreator[]) => {
+    if (y > tableBreakY - 80) {
+      (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
+      y = margin + 14;
+    }
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(primary).text(title, margin, y);
+    y += 14;
+    drawHeader();
+    const sorted = [...txs].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    sorted.forEach((t, rowIndex) => {
+      const row = {
+        cells: [
+          formatDateForExport(t.created_at),
+          t.type === 'income' ? 'Ing.' : 'Egr.',
+          t.concept ?? '',
+          fundsDestDisplay(t),
+          PAYMENT_METHOD_LABELS[t.payment_method] ?? t.payment_method,
+          (t.type === 'income' ? '+' : '−') + ' $' + Number(t.amount).toFixed(2),
+          t.created_by_name ?? '',
+          (t.notes ?? '').slice(0, 90),
+        ],
+        income: t.type === 'income',
+      };
+      x = tableX;
+      let cellHeight = rowH;
+      for (let i = 0; i < row.cells.length; i++) {
+        const w = colW[i] - 6;
+        const h = (doc as unknown as { heightOfString: (text: string, opts?: { width?: number }) => number }).heightOfString(
+          row.cells[i],
+          { width: w }
+        );
+        cellHeight = Math.max(cellHeight, Math.ceil(h) + 8);
+      }
+      if (y + cellHeight > tableBreakY) {
+        (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
+        y = margin + 14;
+        drawHeader();
+      }
+      x = tableX;
+      if (rowIndex % 2 === 1) doc.rect(tableX, y, tableW, cellHeight).fill(rowAlt);
+      row.cells.forEach((cell, i) => {
+        doc.rect(x, y, colW[i], cellHeight).stroke();
+        if (i === 5) doc.fillColor(row.income ? green : red);
+        else doc.fillColor(primary);
+        doc.text(cell, x + 3, y + 4, { width: colW[i] - 6, align: i === 5 ? 'right' : 'left' });
+        x += colW[i];
+      });
+      doc.fillColor(primary);
+      y += cellHeight;
+    });
+    y += 10;
+  };
+
+  drawBookRows('Movimientos Caja Escuela', data.escuela.transactions);
+  drawBookRows('Movimientos Caja DRA', data.dra.transactions);
 
   if (data.allInternalTransfers.length > 0) {
-    doc.y = y + 12;
+    doc.y = y + 2;
     if (doc.y > tableBreakY - 40) {
       (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
       doc.y = margin + 14;
       y = doc.y;
+    } else {
+      y = doc.y;
     }
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(primary).text('Transferencias internas (no operativas)', margin, doc.y);
-    doc.moveDown(0.35);
-    y = doc.y;
-    doc.font('Helvetica-Bold').fontSize(7);
-    x = tableX;
-    headers.forEach((h, i) => {
-      doc.rect(x, y, colW[i], rowH).fill(rowHeader).stroke();
-      doc.text(h, x + headerPad, y + 5, { width: colW[i] - 4 });
-      x += colW[i];
-    });
-    y += rowH;
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(primary).text('Transferencias internas (no operativas)', margin, y);
+    y += 14;
+    drawHeader();
     doc.font('Helvetica').fontSize(7);
     data.allInternalTransfers.forEach((t, rowIndex) => {
       const row = {
         cells: [
-          'Int.',
           formatDateForExport(t.created_at),
-          'Int.',
+          internalTransferExportTypeLabel(t),
           t.concept ?? '',
-          categoryLabel(t),
+          t.funds_destination ? fundsDestDisplay(t) : categoryLabel(t),
           internalTransferPaymentExportLabel(t),
           '$ ' + Number(t.amount).toFixed(2),
+          t.created_by_name ?? '',
           (t.notes ?? '').slice(0, 90),
         ],
         income: false as boolean,
@@ -3092,15 +3085,15 @@ export async function buildCashReportPdfCombined(
       }
       if (y + cellHeight > tableBreakY) {
         (doc as unknown as { addPage: (opts?: object) => void }).addPage(PDF_PAGE_OPTIONS);
-        doc.y = margin + 14;
-        y = doc.y;
+        y = margin + 14;
+        drawHeader();
       }
       x = tableX;
       if (rowIndex % 2 === 1) doc.rect(tableX, y, tableW, cellHeight).fill(rowAlt);
       row.cells.forEach((cell, i) => {
         doc.rect(x, y, colW[i], cellHeight).stroke();
-        doc.fillColor(secondary);
-        doc.text(cell, x + 3, y + 4, { width: colW[i] - 6, align: i === 6 ? 'right' : 'left' });
+        doc.fillColor(i === 5 ? secondary : primary);
+        doc.text(cell, x + 3, y + 4, { width: colW[i] - 6, align: i === 5 ? 'right' : 'left' });
         x += colW[i];
       });
       doc.fillColor(primary);

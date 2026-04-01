@@ -1204,19 +1204,42 @@ router.get('/available-slots', async (req: AuthenticatedRequest, res: Response) 
   const cohortId = req.query.cohortId as string | undefined;
   const instructorId = req.query.instructorId as string | undefined;
   const currentScheduleId = req.query.currentScheduleId as string | undefined;
+  const practiceStartDate = req.query.practiceStartDate as string | undefined;
+  const practiceEndDate = req.query.practiceEndDate as string | undefined;
+  const currentUserId = req.query.currentUserId as string | undefined;
   const scheduleType = req.query.scheduleType as 'weekdays' | 'weekends' | undefined;
   const hoursPerDay = req.query.hoursPerDay != null ? Math.min(4, Math.max(1, Number(req.query.hoursPerDay))) : undefined;
-  if (!cohortId || !instructorId) {
-    res.status(400).json({ error: 'cohortId e instructorId son requeridos' });
+  if (!instructorId) {
+    res.status(400).json({ error: 'instructorId es requerido' });
     return;
   }
   try {
     if (scheduleType === 'weekdays' || scheduleType === 'weekends') {
       const duration = hoursPerDay ?? 1;
-      const slots = await scheduleService.getAvailableStartTimes(cohortId, instructorId, scheduleType, duration, currentScheduleId || null);
+      const slots = await scheduleService.getAvailableStartTimes(
+        cohortId,
+        instructorId,
+        scheduleType,
+        duration,
+        currentScheduleId || null,
+        practiceStartDate || null,
+        practiceEndDate || null,
+        currentUserId || null
+      );
       return res.json({ slots });
     }
-    const slots = await scheduleService.getAvailableSlots(cohortId, instructorId, currentScheduleId || null);
+    if (!cohortId) {
+      res.status(400).json({ error: 'cohortId es requerido cuando no se envía scheduleType' });
+      return;
+    }
+    const slots = await scheduleService.getAvailableSlots(
+      cohortId,
+      instructorId,
+      currentScheduleId || null,
+      practiceStartDate || null,
+      practiceEndDate || null,
+      currentUserId || null
+    );
     res.json({ slots });
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
@@ -1309,6 +1332,58 @@ router.get('/schedule-calendar', async (req: AuthenticatedRequest, res: Response
   try {
     const calendar = await scheduleService.getAdminScheduleCalendarForWeek(weekStart, weekEnd, cohortId, instructorId);
     res.json(calendar);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
+
+router.post(
+  '/practice-bookings',
+  [
+    body('instructorId').isUUID(),
+    body('scheduleType').isIn(['weekdays', 'weekends']),
+    body('startTime').matches(/^(0[6-9]|1[0-9]|2[0-3]):00$/),
+    body('hoursPerDay').toInt().isInt({ min: 1, max: 4 }),
+    body('practiceStartDate').trim().isString().isLength({ min: 10, max: 20 }),
+    body('practiceEndDate').trim().isString().isLength({ min: 10, max: 20 }),
+    body('participantName').trim().notEmpty().isLength({ max: 150 }),
+    body('participantUserId').optional(optionalFalsy).isUUID(),
+  ],
+  async (req: AuthenticatedRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      res.status(400).json({ errors: errors.array() });
+      return;
+    }
+    try {
+      const result = await scheduleService.createPracticeBooking({
+        instructorId: String(req.body.instructorId),
+        scheduleType: req.body.scheduleType as 'weekdays' | 'weekends',
+        startTime: String(req.body.startTime).slice(0, 5),
+        hoursPerDay: Number(req.body.hoursPerDay),
+        practiceStartDate: String(req.body.practiceStartDate).slice(0, 10),
+        practiceEndDate: String(req.body.practiceEndDate).slice(0, 10),
+        participantName: String(req.body.participantName || '').trim(),
+        participantUserId: req.body.participantUserId ? String(req.body.participantUserId) : null,
+      });
+      res.status(201).json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+    }
+  }
+);
+
+router.get('/practice-bookings', async (req: AuthenticatedRequest, res: Response) => {
+  const weekStart = req.query.weekStart as string | undefined;
+  const weekEnd = req.query.weekEnd as string | undefined;
+  const instructorId = req.query.instructorId as string | undefined;
+  if (!weekStart || !weekEnd) {
+    res.status(400).json({ error: 'weekStart y weekEnd son requeridos (YYYY-MM-DD)' });
+    return;
+  }
+  try {
+    const list = await scheduleService.listPracticeBookings(weekStart, weekEnd, instructorId);
+    res.json(list);
   } catch (e) {
     res.status(500).json({ error: (e as Error).message });
   }

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAuthHeaders, triggerSessionExpired } from '@/lib/api';
 
@@ -62,6 +61,27 @@ interface Instructor {
   is_active: boolean;
 }
 
+interface StudentCandidate {
+  id: string;
+  full_name: string;
+  email: string | null;
+  cedula?: string | null;
+}
+
+interface PracticeBookingListItem {
+  id: string;
+  participant_name: string;
+  participant_user_id: string | null;
+  practice_start_date: string;
+  practice_end_date: string;
+  start_time: string;
+  end_time: string;
+  schedule_type: 'weekdays' | 'weekends';
+  hours_per_day: number;
+  instructor_name: string;
+  created_at: string;
+}
+
 export default function AdminSchedulesPage() {
   const { token } = useAuth();
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
@@ -79,7 +99,7 @@ export default function AdminSchedulesPage() {
   const [changeSlots, setChangeSlots] = useState<{ day_of_week: number; start_time: string }[]>([]);
   const [changeScheduleSubmitting, setChangeScheduleSubmitting] = useState(false);
   const [changeScheduleError, setChangeScheduleError] = useState('');
-  const [tab, setTab] = useState<'by-course' | 'by-instructor'>('by-course');
+  const [tab, setTab] = useState<'by-course' | 'by-instructor' | 'practice-list'>('by-course');
   const [scheduleCalendar, setScheduleCalendar] = useState<AdminScheduleCalendarResponse | null>(null);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('');
@@ -88,6 +108,24 @@ export default function AdminSchedulesPage() {
   const [availability, setAvailability] = useState<{ occupied: { date: string; start_time: string; student_names: string[]; status: 'occupied_week1' | 'occupied_ending' }[]; free: { date: string; start_time: string }[] } | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [practiceModalOpen, setPracticeModalOpen] = useState(false);
+  const [practiceStudentQuery, setPracticeStudentQuery] = useState('');
+  const [practiceStudents, setPracticeStudents] = useState<StudentCandidate[]>([]);
+  const [practiceStudentId, setPracticeStudentId] = useState('');
+  const [practiceExternalName, setPracticeExternalName] = useState('');
+  const [practiceInstructorId, setPracticeInstructorId] = useState('');
+  const [practiceScheduleType, setPracticeScheduleType] = useState<'weekdays' | 'weekends'>('weekdays');
+  const [practiceHoursPerDay, setPracticeHoursPerDay] = useState<1 | 2 | 3 | 4>(1);
+  const [practiceStartDate, setPracticeStartDate] = useState('');
+  const [practiceEndDate, setPracticeEndDate] = useState('');
+  const [practiceStartTime, setPracticeStartTime] = useState('');
+  const [practiceAvailableBlocks, setPracticeAvailableBlocks] = useState<{ start_time: string; end_time: string }[]>([]);
+  const [practiceSearchLoading, setPracticeSearchLoading] = useState(false);
+  const [practiceSlotsLoading, setPracticeSlotsLoading] = useState(false);
+  const [practiceSubmitting, setPracticeSubmitting] = useState(false);
+  const [practiceError, setPracticeError] = useState('');
+  const [practiceList, setPracticeList] = useState<PracticeBookingListItem[]>([]);
+  const [practiceListLoading, setPracticeListLoading] = useState(false);
 
   /** Lunes y domingo de la semana (offset 0 = actual) para Horarios por curso. */
   const getWeekStartEndByCourse = (offset: number) => {
@@ -126,9 +164,30 @@ export default function AdminSchedulesPage() {
       .finally(() => setCalendarLoading(false));
   }, [token, weekOffsetByCourse, filterCohortId, filterInstructorId]);
 
+  const loadPracticeList = useCallback(() => {
+    if (!token) return;
+    setPracticeListLoading(true);
+    const params = new URLSearchParams();
+    const { weekStart, weekEnd } = getWeekStartEndByCourse(weekOffsetByCourse);
+    params.set('weekStart', weekStart);
+    params.set('weekEnd', weekEnd);
+    if (filterCohortId) params.set('cohortId', filterCohortId);
+    if (filterInstructorId) params.set('instructorId', filterInstructorId);
+    fetch(`${API_URL}/api/admin/practice-bookings?${params.toString()}`, { headers: getAuthHeaders(token) })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, status: r.status, data: d })))
+      .then(({ ok, status, data }) => {
+        if (status === 401) triggerSessionExpired();
+        if (ok && Array.isArray(data)) setPracticeList(data as PracticeBookingListItem[]);
+        else setPracticeList([]);
+      })
+      .catch(() => setPracticeList([]))
+      .finally(() => setPracticeListLoading(false));
+  }, [token, weekOffsetByCourse, filterCohortId, filterInstructorId]);
+
   useEffect(() => {
     if (tab === 'by-course') loadCalendar();
-  }, [tab, loadCalendar]);
+    if (tab === 'practice-list') loadPracticeList();
+  }, [tab, loadCalendar, loadPracticeList]);
 
   useEffect(() => {
     if (!token) return;
@@ -191,6 +250,84 @@ export default function AdminSchedulesPage() {
       .catch(() => setAvailability(null))
       .finally(() => setAvailabilityLoading(false));
   }, [availabilityInstructorId, token, weekOffset]);
+
+  useEffect(() => {
+    if (!practiceModalOpen || !token) return;
+    const q = practiceStudentQuery.trim();
+    if (q.length < 2) {
+      setPracticeStudents([]);
+      return;
+    }
+    setPracticeSearchLoading(true);
+    fetch(`${API_URL}/api/admin/users?role=student&search=${encodeURIComponent(q)}`, { headers: getAuthHeaders(token) })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, status: r.status, data: d })))
+      .then(({ ok, status, data }) => {
+        if (status === 401) {
+          triggerSessionExpired();
+          return;
+        }
+        const list = ok && Array.isArray(data) ? data : [];
+        setPracticeStudents(
+          list.map((u: { id: string; full_name?: string; email?: string | null; cedula?: string | null }) => ({
+            id: u.id,
+            full_name: u.full_name || 'Sin nombre',
+            email: u.email ?? null,
+            cedula: u.cedula ?? null,
+          }))
+        );
+      })
+      .catch(() => setPracticeStudents([]))
+      .finally(() => setPracticeSearchLoading(false));
+  }, [practiceModalOpen, practiceStudentQuery, token]);
+
+  useEffect(() => {
+    if (!practiceModalOpen) return;
+    if (!practiceInstructorId && instructors.length > 0) {
+      setPracticeInstructorId(instructors[0].id);
+    }
+  }, [practiceModalOpen, practiceInstructorId, instructors]);
+
+  useEffect(() => {
+    if (!practiceModalOpen || !token || !practiceInstructorId || !practiceStartDate || !practiceEndDate || practiceStartDate > practiceEndDate) {
+      setPracticeAvailableBlocks([]);
+      setPracticeStartTime('');
+      return;
+    }
+    setPracticeSlotsLoading(true);
+    const q = new URLSearchParams();
+    q.set('instructorId', practiceInstructorId);
+    q.set('scheduleType', practiceScheduleType);
+    q.set('hoursPerDay', String(practiceHoursPerDay));
+    q.set('practiceStartDate', practiceStartDate);
+    q.set('practiceEndDate', practiceEndDate);
+    fetch(`${API_URL}/api/admin/available-slots?${q.toString()}`, { headers: getAuthHeaders(token) })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, status: r.status, data: d })))
+      .then(({ ok, status, data }) => {
+        if (status === 401) {
+          triggerSessionExpired();
+          return;
+        }
+        const blocks = ok && Array.isArray(data?.slots) ? data.slots : [];
+        setPracticeAvailableBlocks(blocks);
+        if (!blocks.some((b: { start_time: string }) => (b.start_time || '').slice(0, 5) === practiceStartTime)) {
+          setPracticeStartTime(blocks[0]?.start_time?.slice(0, 5) || '');
+        }
+      })
+      .catch(() => {
+        setPracticeAvailableBlocks([]);
+        setPracticeStartTime('');
+      })
+      .finally(() => setPracticeSlotsLoading(false));
+  }, [
+    practiceModalOpen,
+    token,
+    practiceInstructorId,
+    practiceScheduleType,
+    practiceHoursPerDay,
+    practiceStartDate,
+    practiceEndDate,
+    practiceStartTime,
+  ]);
 
   const HOURS = ['06:00', '07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00'];
   /** Normaliza hora a "HH:mm" para coincidir con HOURS (ej: "7:00" -> "07:00"). */
@@ -311,6 +448,89 @@ export default function AdminSchedulesPage() {
 
   const formatTime = (s: CourseSchedule) => (typeof s.start_time === 'string' ? s.start_time.slice(0, 5) : s.start_time);
 
+  const openPracticeModal = () => {
+    const { weekStart, weekEnd } = getWeekStartEndByCourse(weekOffsetByCourse);
+    setPracticeModalOpen(true);
+    setPracticeError('');
+    setPracticeStudentQuery('');
+    setPracticeStudents([]);
+    setPracticeStudentId('');
+    setPracticeExternalName('');
+    setPracticeInstructorId(filterInstructorId || instructors[0]?.id || '');
+    setPracticeScheduleType('weekdays');
+    setPracticeHoursPerDay(1);
+    setPracticeStartDate(weekStart);
+    setPracticeEndDate(weekEnd);
+    setPracticeStartTime('');
+  };
+
+  const submitPracticeEnrollment = async () => {
+    if (!token) return;
+    const externalName = practiceExternalName.trim();
+    const hasStudent = Boolean(practiceStudentId);
+    if ((!hasStudent && !externalName) || !practiceInstructorId || !practiceStartTime || !practiceStartDate || !practiceEndDate) {
+      setPracticeError('Completa persona/alumno, instructor, fechas y hora.');
+      return;
+    }
+    setPracticeError('');
+    setPracticeSubmitting(true);
+    try {
+      const res = hasStudent
+        ? await fetch(`${API_URL}/api/admin/users/${practiceStudentId}`, {
+            method: 'PATCH',
+            headers: { ...getAuthHeaders(token), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              instructorId: practiceInstructorId,
+              scheduleType: practiceScheduleType,
+              startTime: practiceStartTime,
+              practiceHoursPerDay,
+              practiceStartDate,
+              practiceEndDate,
+            }),
+          })
+        : await fetch(`${API_URL}/api/admin/practice-bookings`, {
+            method: 'POST',
+            headers: { ...getAuthHeaders(token), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              instructorId: practiceInstructorId,
+              scheduleType: practiceScheduleType,
+              startTime: practiceStartTime,
+              hoursPerDay: practiceHoursPerDay,
+              practiceStartDate,
+              practiceEndDate,
+              participantName: externalName,
+            }),
+          });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        triggerSessionExpired();
+        return;
+      }
+      if (!res.ok) throw new Error(data?.error || 'No se pudo inscribir la práctica.');
+      setPracticeModalOpen(false);
+      loadCalendar();
+      loadPracticeList();
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : 'No se pudo inscribir la práctica.';
+      const normalized = raw.toLowerCase();
+      if (
+        normalized.includes('schema cache') ||
+        normalized.includes('could not find the') ||
+        (normalized.includes('column') && normalized.includes('does not exist')) ||
+        normalized.includes('falta actualizar la base de datos')
+      ) {
+        setPracticeError('Falta actualizar la base de datos de prácticas. Ejecuta la migración 026 y recarga el schema cache en Supabase.');
+      } else {
+        setPracticeError(raw);
+      }
+    } finally {
+      setPracticeSubmitting(false);
+    }
+  };
+
+  const hasPracticeDateRange = Boolean(practiceStartDate && practiceEndDate);
+  const isPracticeDateRangeValid = hasPracticeDateRange ? practiceStartDate <= practiceEndDate : true;
+
   return (
     <div className="w-full min-w-0 max-w-full space-y-6 sm:space-y-8">
       {/* Header */}
@@ -354,6 +574,17 @@ export default function AdminSchedulesPage() {
           }`}
         >
           Disponibilidad por instructor
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('practice-list')}
+          className={`shrink-0 touch-manipulation whitespace-nowrap px-3 py-2.5 sm:px-5 sm:py-3 text-xs sm:text-sm font-medium rounded-t-lg border-b-2 transition-colors ${
+            tab === 'practice-list'
+              ? 'border-teal-600 text-teal-700 bg-white border-b-white -mb-px'
+              : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50/50'
+          }`}
+        >
+          Prácticas inscritas
         </button>
       </div>
 
@@ -621,6 +852,13 @@ export default function AdminSchedulesPage() {
                   Limpiar filtros
                 </button>
               )}
+              <button
+                type="button"
+                onClick={openPracticeModal}
+                className="w-full sm:w-auto min-h-[44px] rounded-xl border border-indigo-200 bg-indigo-600/95 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 transition-colors touch-manipulation"
+              >
+                Inscribir práctica
+              </button>
             </div>
           </div>
 
@@ -831,12 +1069,6 @@ export default function AdminSchedulesPage() {
                 <p className="text-[11px] sm:text-xs text-slate-500 leading-relaxed">
                   Mantén pulsada una celda o pasa el cursor para ver el texto completo. El filtro «Estado» atenúa las celdas que no coinciden.
                 </p>
-                <Link
-                  href={`/admin/users${filterCohortId ? `?cohortId=${encodeURIComponent(filterCohortId)}` : ''}`}
-                  className="inline-flex w-full sm:w-auto min-h-[44px] items-center justify-center gap-2 rounded-xl border border-teal-200 bg-teal-600/95 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-teal-700 transition-colors touch-manipulation"
-                >
-                  Inscribir alumno
-                </Link>
               </div>
             </div>
           ) : (
@@ -844,6 +1076,231 @@ export default function AdminSchedulesPage() {
               No hay datos de calendario para esta semana o filtros. Prueba otra semana o amplía el curso/instructor.
             </div>
           )}
+        </div>
+      )}
+
+      {tab === 'practice-list' && (
+        <div className="space-y-4 sm:space-y-6">
+          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+            <h3 className="mb-2 text-xs sm:text-sm font-semibold uppercase tracking-wider text-slate-500">Prácticas inscritas</h3>
+            <p className="text-xs sm:text-sm text-slate-600">
+              Listado de personas registradas para práctica en la semana visible, incluyendo externos y alumnos.
+            </p>
+          </div>
+          {practiceListLoading ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 rounded-2xl border border-slate-200 bg-white">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-teal-600 border-t-transparent" />
+              <p className="text-sm text-slate-500">Cargando prácticas...</p>
+            </div>
+          ) : practiceList.length === 0 ? (
+            <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white py-12 px-4 text-center text-sm text-slate-500">
+              No hay prácticas inscritas para los filtros/semana actuales.
+            </div>
+          ) : (
+            <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] text-sm">
+                  <thead className="bg-slate-50 border-b border-slate-200">
+                    <tr className="text-left text-slate-600">
+                      <th className="px-4 py-3 font-semibold">Persona</th>
+                      <th className="px-4 py-3 font-semibold">Instructor</th>
+                      <th className="px-4 py-3 font-semibold">Horario</th>
+                      <th className="px-4 py-3 font-semibold">Tipo</th>
+                      <th className="px-4 py-3 font-semibold">Rango</th>
+                      <th className="px-4 py-3 font-semibold">Curso</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {practiceList.map((p) => (
+                      <tr key={p.id} className="border-b border-slate-100 last:border-0">
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-slate-900">{p.participant_name}</p>
+                          <p className="text-xs text-slate-500">{p.participant_user_id ? 'Alumno' : 'Externo'}</p>
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">{p.instructor_name}</td>
+                        <td className="px-4 py-3 text-slate-700">{p.start_time} - {p.end_time} ({p.hours_per_day}h)</td>
+                        <td className="px-4 py-3 text-slate-700">{p.schedule_type === 'weekdays' ? 'Lunes a viernes' : 'Fines de semana'}</td>
+                        <td className="px-4 py-3 text-slate-700">{p.practice_start_date} a {p.practice_end_date}</td>
+                        <td className="px-4 py-3 text-slate-700">Práctica libre</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {practiceModalOpen && (
+        <div
+          className="fixed inset-0 z-[55] flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-sm pb-[env(safe-area-inset-bottom)]"
+          onClick={() => setPracticeModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-xl max-h-[92dvh] sm:max-h-[90vh] overflow-hidden rounded-t-2xl sm:rounded-2xl bg-white shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-4 sm:px-6 sm:py-5 shrink-0">
+              <h3 className="text-base sm:text-lg font-semibold text-slate-900">Inscribir práctica rápida</h3>
+              <p className="mt-1 text-xs sm:text-sm text-slate-600">
+                Formulario corto para asignar práctica sin tocar la pestaña de usuarios.
+              </p>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+              {practiceError && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{practiceError}</div>
+              )}
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Buscar alumno (nombre, cédula o email)</label>
+                <input
+                  type="text"
+                  value={practiceStudentQuery}
+                  onChange={(e) => setPracticeStudentQuery(e.target.value)}
+                  placeholder="Escribe al menos 2 caracteres"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                />
+                <select
+                  value={practiceStudentId}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setPracticeStudentId(v);
+                    if (v) setPracticeExternalName('');
+                  }}
+                  className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                >
+                  <option value="">Selecciona un alumno</option>
+                  {practiceStudents.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.full_name}{s.cedula ? ` · ${s.cedula}` : ''}{s.email ? ` · ${s.email}` : ''}
+                    </option>
+                  ))}
+                </select>
+                {practiceSearchLoading && <p className="mt-1 text-xs text-slate-500">Buscando alumnos...</p>}
+                <p className="mt-2 text-xs text-slate-500">Si no es alumno, deja este campo vacío y escribe el nombre de la persona.</p>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Persona externa (opcional)</label>
+                <input
+                  type="text"
+                  value={practiceExternalName}
+                  onChange={(e) => {
+                    setPracticeExternalName(e.target.value);
+                    if (e.target.value.trim()) setPracticeStudentId('');
+                  }}
+                  placeholder="Ej: Carlos Pérez"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Instructor</label>
+                  <select
+                    value={practiceInstructorId}
+                    onChange={(e) => setPracticeInstructorId(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value="">Seleccionar instructor</option>
+                    {instructors.map((i) => (
+                      <option key={i.id} value={i.id}>{i.full_name}</option>
+                    ))}
+                  </select>
+                  {!practiceInstructorId && (
+                    <p className="mt-1 text-xs text-amber-600">Selecciona un instructor para ver las horas disponibles.</p>
+                  )}
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Tipo</label>
+                  <select
+                    value={practiceScheduleType}
+                    onChange={(e) => setPracticeScheduleType(e.target.value as 'weekdays' | 'weekends')}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value="weekdays">Lunes a viernes</option>
+                    <option value="weekends">Fines de semana</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Horas por día</label>
+                  <select
+                    value={practiceHoursPerDay}
+                    onChange={(e) => setPracticeHoursPerDay(Number(e.target.value) as 1 | 2 | 3 | 4)}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value={1}>1 hora</option>
+                    <option value={2}>2 horas</option>
+                    <option value={3}>3 horas</option>
+                    <option value={4}>4 horas</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Hora de inicio</label>
+                  <select
+                    value={practiceStartTime}
+                    onChange={(e) => setPracticeStartTime(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value="">Seleccionar hora</option>
+                    {practiceAvailableBlocks.map((b) => (
+                      <option key={`${b.start_time}-${b.end_time}`} value={(b.start_time || '').slice(0, 5)}>
+                        {(b.start_time || '').slice(0, 5)} - {(b.end_time || '').slice(0, 5)}
+                      </option>
+                    ))}
+                  </select>
+                  {practiceSlotsLoading && <p className="mt-1 text-xs text-slate-500">Calculando horas disponibles...</p>}
+                  {!practiceSlotsLoading && isPracticeDateRangeValid && practiceInstructorId && practiceStartDate && practiceEndDate && practiceAvailableBlocks.length === 0 && (
+                    <p className="mt-1 text-xs text-amber-600">No hay horas disponibles para ese rango de fechas con este instructor.</p>
+                  )}
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Inicio práctica</label>
+                  <input
+                    type="date"
+                    value={practiceStartDate}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPracticeStartDate(v);
+                      if (practiceEndDate && v && practiceEndDate < v) setPracticeEndDate(v);
+                    }}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">Fin práctica</label>
+                  <input
+                    type="date"
+                    value={practiceEndDate}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPracticeEndDate(v);
+                      if (practiceStartDate && v && v < practiceStartDate) setPracticeStartDate(v);
+                    }}
+                    className="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-slate-900 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
+              </div>
+              {!isPracticeDateRangeValid && (
+                <p className="text-xs text-amber-700">La fecha fin no puede ser menor que la fecha inicio.</p>
+              )}
+            </div>
+            <div className="flex flex-col-reverse sm:flex-row gap-2 border-t border-slate-100 px-4 sm:px-6 py-3 sm:py-4 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
+              <button
+                type="button"
+                onClick={submitPracticeEnrollment}
+                disabled={(!practiceStudentId && !practiceExternalName.trim()) || !practiceInstructorId || !practiceStartTime || !practiceStartDate || !practiceEndDate || !isPracticeDateRangeValid || practiceSubmitting}
+                className="flex-1 min-h-[44px] rounded-xl bg-indigo-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-700 disabled:opacity-50 disabled:pointer-events-none"
+              >
+                {practiceSubmitting ? 'Guardando...' : 'Guardar práctica'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPracticeModalOpen(false)}
+                className="min-h-[44px] rounded-xl border border-slate-200 py-2.5 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

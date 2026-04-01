@@ -354,29 +354,29 @@ export default function AdminCoursesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 text-white shadow-xl shadow-red-600/20">
+      <div className="relative overflow-hidden rounded-3xl border border-red-500/20 bg-gradient-to-br from-red-600 via-red-600 to-rose-700 p-6 text-white shadow-xl shadow-red-600/20">
         <div className="relative z-10">
           <h2 className="text-xl font-bold mb-1">Cursos y materias</h2>
           <p className="text-red-100 text-sm">Tipos de curso, números, materias y contenido teórico.</p>
         </div>
       </div>
 
-      <div className="flex gap-2 flex-wrap">
+      <div className="inline-flex flex-wrap gap-2 rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-sm">
         <button
           onClick={() => setTab('courses')}
-          className={`px-5 py-2.5 rounded-xl font-medium transition-all duration-200 ${tab === 'courses' ? 'bg-red-600 text-white shadow-md' : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'}`}
+          className={`px-5 py-2.5 rounded-xl font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30 ${tab === 'courses' ? 'bg-red-600 text-white shadow-md shadow-red-600/30' : 'text-neutral-700 hover:bg-neutral-100'}`}
         >
           Tipos de curso
         </button>
         <button
           onClick={() => setTab('subjects')}
-          className={`px-5 py-2.5 rounded-xl font-medium transition-all duration-200 ${tab === 'subjects' ? 'bg-red-600 text-white shadow-md' : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'}`}
+          className={`px-5 py-2.5 rounded-xl font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30 ${tab === 'subjects' ? 'bg-red-600 text-white shadow-md shadow-red-600/30' : 'text-neutral-700 hover:bg-neutral-100'}`}
         >
           Materias
         </button>
         <button
           onClick={() => { setTab('content'); loadContents(); }}
-          className={`px-5 py-2.5 rounded-xl font-medium transition-all duration-200 ${tab === 'content' ? 'bg-red-600 text-white shadow-md' : 'bg-white border border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50'}`}
+          className={`px-5 py-2.5 rounded-xl font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30 ${tab === 'content' ? 'bg-red-600 text-white shadow-md shadow-red-600/30' : 'text-neutral-700 hover:bg-neutral-100'}`}
         >
           Contenido
         </button>
@@ -397,14 +397,14 @@ export default function AdminCoursesPage() {
             <div className="flex flex-wrap gap-3 items-center">
               <button
                 onClick={() => { setShowCourseForm(true); setShowNumberForm(false); }}
-                className="px-5 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 shadow-md hover:shadow-lg transition-all duration-200"
+                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 shadow-md hover:shadow-lg transition-all duration-200"
               >
                 + Crear tipo de curso
               </button>
               <button
                 onClick={() => { setShowNumberForm(true); setShowCourseForm(false); }}
                 disabled={courses.length === 0}
-                className="px-5 py-2.5 rounded-lg bg-neutral-700 text-white font-medium hover:bg-neutral-600 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200"
+                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-neutral-800 text-white font-medium hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transition-all duration-200"
                 title={courses.length === 0 ? 'Primero crea un tipo de curso' : ''}
               >
                 + Crear número de curso
@@ -507,16 +507,17 @@ export default function AdminCoursesPage() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-sm">
-            <div className="px-6 py-4 border-b bg-neutral-50/80">
+          <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden shadow-sm">
+            <div className="px-6 py-4 border-b bg-neutral-50/80 flex items-center justify-between gap-3">
               <h3 className="font-semibold text-neutral-900">Tipos de curso</h3>
+              <span className="text-xs font-medium text-neutral-500">{courses.length} registrado{courses.length === 1 ? '' : 's'}</span>
             </div>
             {loading ? <div className="p-8 text-center text-neutral-500">Cargando...</div> : courses.length === 0 ? (
               <div className="p-8 text-center text-neutral-500">No hay tipos de curso. Crea el primero.</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[320px]">
-                <thead className="bg-neutral-50/50">
+                <thead className="bg-neutral-50/80">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Nombre</th>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Precio</th>
@@ -544,16 +545,17 @@ export default function AdminCoursesPage() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-sm">
-            <div className="px-6 py-4 border-b bg-neutral-50/80">
+          <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden shadow-sm">
+            <div className="px-6 py-4 border-b bg-neutral-50/80 flex items-center justify-between gap-3">
               <h3 className="font-semibold text-neutral-900">Números de curso creados</h3>
+              <span className="text-xs font-medium text-neutral-500">{cohorts.length} activo{cohorts.length === 1 ? '' : 's'}</span>
             </div>
             {cohorts.length === 0 ? (
               <div className="p-8 text-center text-neutral-500">No hay números de curso. Crea uno arriba.</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[320px]">
-                <thead className="bg-neutral-50/50">
+                <thead className="bg-neutral-50/80">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Curso completo</th>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700 w-32">Acciones</th>
@@ -672,12 +674,12 @@ export default function AdminCoursesPage() {
 
       {tab === 'subjects' && (
         <>
-          <div className="flex flex-wrap gap-3 justify-between items-center">
-            <div className="flex gap-2">
+          <div className="flex flex-wrap gap-3 justify-between items-center rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm">
+            <div className="flex gap-2 flex-wrap">
               <select
               value={selectedCourse}
               onChange={(e) => setSelectedCourse(e.target.value)}
-              className="px-4 py-2 rounded-lg border border-neutral-300"
+              className="min-h-[44px] px-4 py-2 rounded-xl border border-neutral-300 text-sm"
             >
               <option value="">Todos los cursos</option>
               {courses.map((c) => (
@@ -686,7 +688,7 @@ export default function AdminCoursesPage() {
             </select>
               <button
                 onClick={() => setShowSubjectForm(true)}
-                className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700"
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 shadow-sm"
               >
                 + Crear materia
               </button>
@@ -727,13 +729,13 @@ export default function AdminCoursesPage() {
             </form>
           )}
 
-          <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-sm">
+          <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden shadow-sm">
             {loading ? (
               <div className="p-8 text-center text-neutral-500">Cargando...</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[400px]">
-                <thead className="bg-neutral-50/50">
+                <thead className="bg-neutral-50/80">
                   <tr>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Materia</th>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-neutral-700">Curso</th>
@@ -760,11 +762,11 @@ export default function AdminCoursesPage() {
 
       {tab === 'content' && (
         <>
-          <div className="flex flex-col sm:flex-row gap-4 flex-wrap">
+          <div className="flex flex-col sm:flex-row gap-3 flex-wrap rounded-2xl border border-neutral-200 bg-white p-3 shadow-sm">
             <select
               value={selectedCourse}
               onChange={(e) => { setSelectedCourse(e.target.value); setSelectedSubject(''); }}
-              className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-lg border border-neutral-200"
+              className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-xl border border-neutral-200 text-sm"
             >
               <option value="">Curso</option>
               {courses.map((c) => (
@@ -779,7 +781,7 @@ export default function AdminCoursesPage() {
                 setContentForm((f) => ({ ...f, subjectId: v }));
                 if (v) loadContents(v);
               }}
-              className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-lg border border-neutral-200"
+              className="w-full sm:w-auto min-h-[44px] px-4 py-2 rounded-xl border border-neutral-200 text-sm"
             >
               <option value="">Materia</option>
               {filteredSubjects.map((s) => (
@@ -789,7 +791,7 @@ export default function AdminCoursesPage() {
             <button
               onClick={() => { setShowContentForm(true); loadContents(); }}
               disabled={!selectedSubject}
-              className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 shadow-md hover:shadow-lg transition-all duration-200"
+              className="w-full sm:w-auto min-h-[44px] px-5 py-2.5 rounded-xl bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 shadow-md hover:shadow-lg transition-all duration-200"
             >
               Crear contenido
             </button>
@@ -854,7 +856,7 @@ export default function AdminCoursesPage() {
             </form>
           )}
 
-          <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-sm">
+          <div className="bg-white rounded-2xl border border-neutral-200 overflow-hidden shadow-sm">
             {contents.length === 0 && selectedSubject ? (
               <div className="p-8 text-center text-neutral-500">Sin contenido. Crea el primero.</div>
             ) : (

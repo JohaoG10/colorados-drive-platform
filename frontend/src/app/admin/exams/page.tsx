@@ -254,7 +254,7 @@ export default function AdminExamsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 text-white shadow-xl shadow-red-600/20">
+      <div className="relative overflow-hidden rounded-3xl border border-red-500/20 bg-gradient-to-br from-red-600 via-red-600 to-rose-700 p-6 text-white shadow-xl shadow-red-600/20">
         <div className="relative z-10 flex flex-wrap justify-between items-start gap-4">
           <div>
             <h2 className="text-xl font-bold mb-1">Exámenes</h2>
@@ -262,7 +262,7 @@ export default function AdminExamsPage() {
           </div>
           <button
             onClick={() => setShowForm(!showForm)}
-            className={`px-4 py-2.5 rounded-xl font-medium transition-all ${showForm ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-white text-red-600 hover:bg-neutral-100'}`}
+            className={`min-h-[44px] px-4 py-2.5 rounded-xl font-medium transition-all ${showForm ? 'bg-white/20 text-white hover:bg-white/30' : 'bg-white text-red-600 hover:bg-neutral-100 shadow-sm'}`}
           >
             {showForm ? 'Cancelar' : '+ Crear examen'}
           </button>
@@ -293,15 +293,15 @@ export default function AdminExamsPage() {
       )}
 
       {showForm && (
-        <form onSubmit={createExam} className="bg-white rounded-xl border border-neutral-200 shadow-sm p-4 sm:p-6 space-y-5">
+        <form onSubmit={createExam} className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-4 sm:p-6 space-y-5">
           <div>
             <label className="block text-sm font-medium mb-2">Alcance</label>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2">
+            <div className="flex gap-3 flex-wrap">
+              <label className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 cursor-pointer transition-colors ${scope === 'subject' ? 'border-red-200 bg-red-50 text-red-700' : 'border-neutral-200 hover:bg-neutral-50'}`}>
                 <input type="radio" checked={scope === 'subject'} onChange={() => setScope('subject')} />
                 Por materia
               </label>
-              <label className="flex items-center gap-2">
+              <label className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 cursor-pointer transition-colors ${scope === 'course' ? 'border-red-200 bg-red-50 text-red-700' : 'border-neutral-200 hover:bg-neutral-50'}`}>
                 <input type="radio" checked={scope === 'course'} onChange={() => setScope('course')} />
                 Por curso
               </label>
@@ -425,7 +425,7 @@ export default function AdminExamsPage() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px]">
-            <thead className="bg-neutral-50">
+            <thead className="bg-neutral-50/80">
               <tr>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Examen</th>
                 <th className="px-6 py-3 text-left text-sm font-semibold">Alcance</th>
@@ -455,23 +455,23 @@ export default function AdminExamsPage() {
                     <div className="flex flex-wrap gap-2">
                       <Link
                         href={`/admin/exams/${ex.id}/questions`}
-                        className="inline-flex items-center gap-1.5 text-red-600 hover:text-red-700 font-medium text-sm"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-red-600 hover:bg-red-50 hover:text-red-700 font-medium text-sm transition-colors"
                       >
                         Preguntas
                       </Link>
                       <Link
                         href={`/admin/exams/${ex.id}/results`}
-                        className="inline-flex items-center gap-1.5 text-neutral-700 hover:text-neutral-900 font-medium text-sm"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 font-medium text-sm transition-colors"
                       >
                         Resultados
                       </Link>
-                      <button type="button" onClick={() => openEditModal(ex)} className="text-neutral-600 hover:text-neutral-900 font-medium text-sm">
+                      <button type="button" onClick={() => openEditModal(ex)} className="rounded-md px-2 py-1 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 font-medium text-sm transition-colors">
                         Editar
                       </button>
-                      <button type="button" onClick={() => openAvailabilityModal(ex)} className="text-amber-600 hover:text-amber-700 font-medium text-sm" title="Habilitar examen definitivo para números de curso">
+                      <button type="button" onClick={() => openAvailabilityModal(ex)} className="rounded-md px-2 py-1 text-amber-600 hover:bg-amber-50 hover:text-amber-700 font-medium text-sm transition-colors" title="Habilitar examen definitivo para números de curso">
                         Habilitar definitivo
                       </button>
-                      <button onClick={() => deleteExam(ex.id)} className="text-red-600 hover:underline text-sm">
+                      <button onClick={() => deleteExam(ex.id)} className="rounded-md px-2 py-1 text-red-600 hover:bg-red-50 hover:text-red-700 text-sm transition-colors">
                         Eliminar
                       </button>
                     </div>
