@@ -7,8 +7,9 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { ActivityTracker } from '@/components/ActivityTracker';
 import { NotificationsBell } from '@/components/NotificationsBell';
 import { getAuthHeaders } from '@/lib/api';
+import { getApiUrl } from '@/lib/env';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = getApiUrl();
 
 const navItems = [
   { href: '/student', label: 'Inicio', icon: <HomeIcon /> },

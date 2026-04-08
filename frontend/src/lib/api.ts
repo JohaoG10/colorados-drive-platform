@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+import { getApiUrl, isApiUrlConfiguredForProduction } from '@/lib/env';
+
+const API_URL = getApiUrl();
 
 export interface User {
   id: string;
@@ -16,11 +18,24 @@ export interface LoginResponse {
 }
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
-  const res = await fetch(`${API_URL}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
+  if (!isApiUrlConfiguredForProduction(API_URL)) {
+    throw new Error(
+      'Configuracion de produccion incompleta: define NEXT_PUBLIC_API_URL en Vercel con la URL publica del backend.'
+    );
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+  } catch {
+    throw new Error(
+      'No se pudo conectar con el servidor. Verifica NEXT_PUBLIC_API_URL en Vercel y CORS_ORIGIN en el backend.'
+    );
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = typeof body?.error === 'string' ? body.error : 'Error al iniciar sesión';
@@ -30,9 +45,14 @@ export async function login(email: string, password: string): Promise<LoginRespo
 }
 
 export async function getMe(token: string): Promise<User> {
-  const res = await fetch(`${API_URL}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    throw new Error('Session expired');
+  }
   if (!res.ok) throw new Error('Session expired');
   return res.json();
 }

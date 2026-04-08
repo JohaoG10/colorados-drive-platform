@@ -3,8 +3,9 @@
 import { useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAuthHeaders } from '@/lib/api';
+import { getApiUrl } from '@/lib/env';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = getApiUrl();
 const INTERVAL_MS = 60000; // 1 min
 
 export function ActivityTracker() {
